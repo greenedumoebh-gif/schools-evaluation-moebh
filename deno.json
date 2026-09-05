@@ -1,0 +1,36 @@
+{
+  "name": "green-education-platform",
+  "version": "1.0.0",
+  "exports": "./main.ts",
+  "tasks": {
+    "dev": "deno run -A --watch main.ts",
+    "start": "deno run -A main.ts",
+    "check": "deno check main.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    "test": "deno run -A tests/api_test.ts"
+  },
+  "fmt": {
+    "lineWidth": 110,
+    "semiColons": true
+  },
+  "lint": {
+    "rules": {
+      "tags": [
+        "recommended"
+      ]
+    }
+  },
+  "compilerOptions": {
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom",
+      "dom.iterable"
+    ],
+    "strict": true
+  },
+  "unstable": [
+    "kv"
+  ]
+}
