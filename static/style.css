@@ -562,39 +562,13 @@ textarea {
   justify-content: center;
   gap: 16px;
 }
-.lockup img {
-  display: block;
-  object-fit: contain;
-  width: auto;
-}
-.lk-div {
-  width: 1px;
-  align-self: stretch;
-  background: linear-gradient(180deg, transparent, var(--line), transparent);
-}
 .lockup-lg {
   margin-bottom: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
-.lockup-lg img {
-  height: 64px;
-  max-height: 64px;
-}
-.lockup-lg .lk-div {
-  margin: 4px 0;
-}
 .lockup-sm {
-  background: #fff;
-  border-radius: 12px;
-  padding: 9px 11px;
-  gap: 10px;
   margin-bottom: 11px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
-}
-.lockup-sm img {
-  height: 34px;
-  max-height: 34px;
 }
 
 /* ───────── شاشة الدخول ───────── */
@@ -914,4 +888,84 @@ h3.st::before {
   .yearbar {
     display: none;
   }
+}
+
+/* ── الشعارات: مربعان أبيضان متساويان بخلفية شفافة للصورة ── */
+.lockup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.lgbox {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.lockup-lg .lgbox {
+  width: 86px;
+  height: 86px;
+  padding: 9px;
+}
+.lockup-sm .lgbox {
+  width: 52px;
+  height: 52px;
+  padding: 6px;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.lgbox img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+}
+.printhead .hdr-rect {
+  height: 34px;
+  width: auto;
+}
+.printhead .hdr-sq {
+  height: 40px;
+  width: 40px;
+  object-fit: contain;
+}
+
+/* ── الرسوم البيانية ── */
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.chartcard {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 14px 16px 10px;
+}
+.chartcard h5 {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.chartcard p {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.chartbox {
+  position: relative;
+  height: 250px;
+}
+.chartcard.wide {
+  grid-column: 1 / -1;
+}
+.chartcard.wide .chartbox {
+  height: 300px;
 }

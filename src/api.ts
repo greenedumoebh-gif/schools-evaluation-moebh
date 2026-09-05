@@ -66,13 +66,23 @@ const J = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
   });
 
 export const MAX_PICKS = 3;
-/** نافذة الأعوام المعروضة: سنتان سابقتان · الحالية · القادمة. */
+/**
+ * نافذة الأعوام: سنتان سابقتان · الحالي · القادم، ولا تسبق بداية الخط الزمني.
+ * الخط الزمني يبدأ من 2025-2026 وهو عام مؤرشف مقيَّم في الملفات المركزية.
+ */
 export function yearWindow(cur: string): string[] {
   const a = Number(cur.slice(0, 4));
-  return [a - 2, a - 1, a, a + 1].map((y) => `${y}-${y + 1}`);
+  const start = Number(META.startYear.slice(0, 4));
+  return [a - 2, a - 1, a, a + 1]
+    .filter((y) => y >= start)
+    .map((y) => `${y}-${y + 1}`);
+}
+/** العام المؤرشف: يُعرض مقيَّماً من الملفات المركزية ولا يُدخل فيه شيء. */
+export function yearIsArchive(y: string): boolean {
+  return y === META.archiveYear;
 }
 export function yearIsEditable(y: string, cur: string): boolean {
-  return y === cur;
+  return y === cur && !yearIsArchive(y);
 }
 export const TOP_N = 10;
 
@@ -147,6 +157,10 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         currentYear: await currentYear(),
         years: await listYears(),
         yearWindow: yearWindow(await currentYear()),
+        startYear: META.startYear,
+        yearColors: META.yearColors,
+        yearColorFallback: META.yearColorFallback,
+        archiveYear: META.archiveYear,
         teamMeta: META.teamMeta,
         sizeRule: META.sizeRule,
         centralFields: META.centralFields,
@@ -197,6 +211,32 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       const c = central[i.id];
       const sc = scoreInst(i.team, i, e?.kpi ?? {}, ovOf(i.team), c);
       const students = c?.students ?? null;
+      const arch = yearIsArchive(year) ? i.prev : null;
+      if (arch) {
+        // العام المؤرشف يُعرض بنتيجة الملفات المركزية ولا يُحسب بالمنهجية الخطية
+        return {
+          ...i,
+          central: c ?? { students: null, teachers: null, subjects: null },
+          students: i.students,
+          teamNo: META.teamMeta[i.team]?.no ?? null,
+          teamCode: META.teamMeta[i.team]?.code ?? null,
+          kpi: {},
+          kpiPct: {},
+          axes: arch.ax,
+          axPts: arch.ax,
+          pts: arch.pts,
+          filled: 0,
+          totalKpi: 0,
+          status: arch.verdict ? "مكتمل" : "لم يبدأ",
+          notes: "",
+          pct: arch.pct,
+          level: arch.verdict,
+          basis: arch.basis,
+          archived: true,
+          cap: capOf(i.team),
+          axw: axw(i.team),
+        };
+      }
       return {
         ...i,
         central: c ?? { students: null, teachers: null, subjects: null },
@@ -219,7 +259,13 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         axw: axw(i.team),
       };
     });
-    return J({ year, editable: yearIsEditable(year, cur), currentYear: cur, rows });
+    return J({
+      year,
+      editable: yearIsEditable(year, cur),
+      archived: yearIsArchive(year),
+      currentYear: cur,
+      rows,
+    });
   }
 
   // ── تعريف المؤشرات والمستهدفات السارية لمؤسسة بعينها ──
@@ -596,10 +642,24 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         axes: sc.axes,
         level: lvlOf(sc.pct).n,
         basis: "خطية",
+        archived: false,
       });
     }
+    if (i.prev && (i.prev.pct !== null || i.prev.verdict)) {
+      cycles.push({
+        year: i.prev.year,
+        pct: i.prev.pct ?? 0,
+        pts: i.prev.pts ?? 0,
+        axes: i.prev.ax,
+        level: i.prev.verdict ?? "—",
+        basis: i.prev.basis,
+        archived: true,
+      });
+    }
+    cycles.sort((a, b) => b.year.localeCompare(a.year));
     // الأداء التراكمي: متوسط آخر ثلاث دورات مكتملة على المنهجية الخطية وحدها.
-    const last3 = cycles.slice(0, 3);
+    const linear = cycles.filter((c) => !("archived" in c) || !c.archived);
+    const last3 = linear.slice(0, 3);
     const avg = last3.length
       ? Math.round(last3.reduce((a, c) => a + c.pct, 0) / last3.length * 10) / 10
       : null;
@@ -625,6 +685,12 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     const { year } = await req.json().catch(() => ({}));
     if (!/^\d{4}-\d{4}$/.test(String(year ?? ""))) {
       return J({ error: "صيغة العام الدراسي: 2026-2027" }, 400);
+    }
+    if (yearIsArchive(String(year))) {
+      return J({ error: `${year} عام مؤرشف بتقييم سابق، لا يُفتح للإدخال` }, 400);
+    }
+    if (String(year) < META.startYear) {
+      return J({ error: `الخط الزمني يبدأ من ${META.startYear}` }, 400);
     }
     await setCurrentYear(String(year));
     await audit(acc.id, "تغيير العام الدراسي", String(year));

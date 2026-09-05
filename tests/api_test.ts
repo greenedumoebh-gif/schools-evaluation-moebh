@@ -269,7 +269,11 @@ chk(cdRow.size === "المدرسة الكبيرة", `التصنيف مشتق م�
 chk(cdRow.teamNo === 1 && cdRow.teamCode === "Z1", `رقم الفريق ورمزه (${cdRow.teamCode}-${cdRow.teamNo})`);
 const kd = await (await call(ev1.sid, "/api/kpis?inst=" + mine.id)).json();
 const kc = kd.kpis.filter((k: { centralField: string | null }) => k.centralField);
-chk(kc.length === 7, `مؤشرات تسحب مقامها مركزياً (${kc.length})`);
+chk(kc.length === 4, `مؤشرات تسحب مقامها مركزياً (${kc.length})`);
+chk(
+  kc.every((k: { n: number }) => [6, 7, 8, 26].includes(k.n)),
+  "«الطلبة المستهدفون» يبقى بإدخال المقيّم ولا يُسحب مركزياً",
+);
 chk(
   kd.kpis.find((k: { n: number }) => k.n === 8).centralValue === 40,
   "المؤشر 8 يسحب عدد المعلمين",
@@ -331,12 +335,35 @@ await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: rawFor(de
 
 console.log("\n■ الدورات والأداء التراكمي");
 const meNow = await (await call(tech.sid, "/api/me")).json();
-chk(meNow.meta.currentYear === "2025-2026", `العام الجاري ${meNow.meta.currentYear}`);
+chk(meNow.meta.currentYear === "2026-2027", `العام الجاري ${meNow.meta.currentYear}`);
+chk(
+  JSON.stringify(meNow.meta.yearWindow) === JSON.stringify(["2025-2026", "2026-2027", "2027-2028"]),
+  `نافذة الأعوام لا تسبق بداية الخط الزمني (${meNow.meta.yearWindow.join(" · ")})`,
+);
+const arch = await (await call(ev1.sid, "/api/institutions?year=2025-2026")).json();
+chk(arch.archived === true && arch.editable === false, "2025-2026 مؤرشف وغير قابل للإدخال");
+const ar1 = arch.rows.find((r: { id: string }) => r.id === mine.id);
+chk(
+  ar1.status === "مكتمل" && ar1.level === "مستدام" && ar1.basis === "لوغاريتمية",
+  `المؤسسة تظهر مقيَّمة في العام المؤرشف (${ar1.pct}% · ${ar1.level})`,
+);
+chk(
+  (await call(tech.sid, "/api/year", "POST", { year: "2025-2026" })).status === 400,
+  "لا يُفتح العام المؤرشف للإدخال (400)",
+);
+chk(
+  (await call(tech.sid, "/api/year", "POST", { year: "2024-2025" })).status === 400,
+  "عام قبل بداية الخط الزمني يُرفض (400)",
+);
 const hist1 = await (await call(ev1.sid, "/api/history?inst=" + mine.id)).json();
-chk(hist1.cycles.length === 1 && hist1.cycles[0].year === "2025-2026", "دورة واحدة مكتملة");
+chk(
+  hist1.cycles.length === 2 && hist1.cycles[0].year === "2026-2027" &&
+    hist1.cycles[1].year === "2025-2026" && hist1.cycles[1].archived === true,
+  "دورتان: الجارية خطية والمؤرشفة لوغاريتمية",
+);
 chk(
   hist1.cumulative.n === 1 && hist1.cumulative.complete === false,
-  "الحسم التراكمي غير مكتمل بدورة واحدة",
+  "المؤرشفة لا تُحتسب: دورة واحدة فقط في المتوسط التراكمي",
 );
 chk(
   hist1.prev !== null && hist1.prev.basis === "لوغاريتمية",
@@ -354,20 +381,23 @@ chk(
   (await call(tech.sid, "/api/year", "POST", { year: "2026" })).status === 400,
   "صيغة عام خاطئة تُرفض (400)",
 );
-await call(tech.sid, "/api/year", "POST", { year: "2026-2027" });
+await call(tech.sid, "/api/year", "POST", { year: "2027-2028" });
 const y2 = await (await call(ev1.sid, "/api/institutions")).json();
 chk(
-  y2.year === "2026-2027" && y2.rows.find((r: { id: string }) => r.id === mine.id).status === "لم يبدأ",
+  y2.year === "2027-2028" && y2.rows.find((r: { id: string }) => r.id === mine.id).status === "لم يبدأ",
   "العام الجديد يبدأ بصفحة بيضاء ولا يمسّ الدورة السابقة",
 );
 await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: rawFor(defs, 60) });
 const hist2 = await (await call(ev1.sid, "/api/history?inst=" + mine.id)).json();
-chk(hist2.cycles.length === 2, `دورتان محفوظتان (${hist2.cycles.length})`);
+chk(
+  hist2.cycles.length === 3 && hist2.cycles.filter((c: { archived: boolean }) => !c.archived).length === 2,
+  `ثلاث دورات: اثنتان خطيتان ومؤرشفة (${hist2.cycles.length})`,
+);
 chk(
   hist2.cumulative.n === 2 && hist2.cumulative.avg !== null && hist2.cumulative.trend !== null,
   `متوسط دورتين ${hist2.cumulative.avg}% · الفرق ${hist2.cumulative.trend}`,
 );
-await call(tech.sid, "/api/year", "POST", { year: "2025-2026" });
+await call(tech.sid, "/api/year", "POST", { year: "2026-2027" });
 const back = await (await call(ev1.sid, "/api/institutions")).json();
 chk(
   back.rows.find((r: { id: string }) => r.id === mine.id).status === "مكتمل",

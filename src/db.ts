@@ -102,6 +102,10 @@ export const META = seed as unknown as {
   teamMeta: Record<string, { code: string; no: number; kind: string; label: string }>;
   denomMap: Record<string, string>;
   centralFields: [string, string][];
+  yearColors: Record<string, string>;
+  yearColorFallback: string;
+  startYear: string;
+  archiveYear: string;
 };
 
 // ── تشفير كلمات المرور: PBKDF2-SHA256 ──

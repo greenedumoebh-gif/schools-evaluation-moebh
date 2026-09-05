@@ -12,9 +12,12 @@ const SECS = {
   tech: ["الحساب الفني", "البيانات المركزية والحسابات والمؤشرات", "⚙"],
 };
 /** ألوان تبويبات الأعوام: سابقتان · الحالي · القادم */
-const YRC = ["#8a94a6", "#6A1B9A", "#1E7145", "#BA7517"];
+/** لون ثابت لكل عام دراسي، مصدره الخادم ولا يتغيّر بتغيّر نافذة الأعوام. */
+function yearColor(y) {
+  return (META.yearColors && META.yearColors[y]) || META.yearColorFallback || "#5f6b64";
+}
 let ME = null, META = null, PERMS = [], SEC = null, ROWS = [], TOP = null;
-let TGT = null, TGSTAGE = "school", VYEAR = null, EDITABLE = true;
+let TGT = null, TGSTAGE = "school", VYEAR = null, EDITABLE = true, ARCHIVED = false;
 const TGDEFS = {};
 
 const fmt = (n, d = 0) =>
@@ -95,10 +98,14 @@ function buildYearTabs() {
     bar.className = "yearbar";
     document.querySelector(".topbar").after(bar);
   }
-  bar.innerHTML = META.yearWindow.map((y, i) =>
+  bar.innerHTML = META.yearWindow.map((y) =>
     `<button class="ytab${y === VYEAR ? " on" : ""}" data-y="${y}"
-      style="--yc:${YRC[i]}">${y}${
-      y === META.currentYear ? '<span class="ybadge">الجاري</span>' : ""
+      style="--yc:${yearColor(y)}">${y}${
+      y === META.archiveYear
+        ? '<span class="ybadge">مؤرشف</span>'
+        : y === META.currentYear
+        ? '<span class="ybadge">الجاري</span>'
+        : ""
     }</button>`
   ).join("") +
     `<span class="ynote" id="ynote"></span>`;
@@ -132,6 +139,7 @@ $("#mbtn").onclick = () => $("#sb").classList.toggle("open");
 async function render() {
   $("#tt").textContent = SECS[SEC][0];
   $("#ts").textContent = SECS[SEC][1] + " · " + ME.name;
+  destroyCharts();
   $("#content").innerHTML =
     `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
   try {
@@ -139,9 +147,12 @@ async function render() {
       const d = await api("/api/institutions?year=" + encodeURIComponent(VYEAR));
       ROWS = d.rows;
       EDITABLE = d.editable;
+      ARCHIVED = d.archived;
       const note = $("#ynote");
       if (note) {
-        note.textContent = EDITABLE
+        note.textContent = ARCHIVED
+          ? "عام مؤرشف — نتائجه من الملفات المركزية بالمنهجية اللوغاريتمية السابقة"
+          : EDITABLE
           ? "العام الجاري — الإدخال متاح"
           : `عرض فقط — الإدخال متاح في ${META.currentYear} وحده`;
         note.className = "ynote" + (EDITABLE ? "" : " ro");
@@ -166,11 +177,53 @@ async function render() {
 const done = (l) => l.filter((x) => x.status === "مكتمل");
 const avgOf = (l) => l.length ? l.reduce((s, x) => s + x.pct, 0) / l.length : 0;
 
+/* ── الرسوم البيانية ── */
+const CHARTS = [];
+const CH_FONT = { family: "'Segoe UI', Tahoma, sans-serif", size: 12 };
+function destroyCharts() {
+  while (CHARTS.length) CHARTS.pop().destroy();
+}
+/** يبني رسماً في عنصر canvas بمعرّف id بعد إدراج HTML في الصفحة. */
+function drawChart(id, cfg) {
+  const el = document.getElementById(id);
+  if (!el || typeof Chart === "undefined") return;
+  cfg.options = cfg.options || {};
+  cfg.options.responsive = true;
+  cfg.options.maintainAspectRatio = false;
+  cfg.options.locale = "ar-u-nu-latn";
+  cfg.options.plugins = cfg.options.plugins || {};
+  cfg.options.plugins.legend = Object.assign(
+    { labels: { font: CH_FONT, color: "#20302a", boxWidth: 12, padding: 12 } },
+    cfg.options.plugins.legend || {},
+  );
+  cfg.options.plugins.tooltip = Object.assign(
+    { rtl: true, textDirection: "rtl", bodyFont: CH_FONT, titleFont: CH_FONT },
+    cfg.options.plugins.tooltip || {},
+  );
+  if (cfg.options.scales) {
+    for (const k of Object.keys(cfg.options.scales)) {
+      const sc = cfg.options.scales[k];
+      sc.ticks = Object.assign({ font: CH_FONT, color: "#5f6b64" }, sc.ticks || {});
+      sc.grid = Object.assign({ color: "#eef2ef" }, sc.grid || {});
+    }
+  }
+  CHARTS.push(new Chart(el, cfg));
+}
+function chartCard(id, title, sub, wide) {
+  return `<div class="chartcard${wide ? " wide" : ""}"><h5>${esc(title)}</h5>
+    <p>${esc(sub)}</p><div class="chartbox"><canvas id="${id}"></canvas></div></div>`;
+}
+
 /* ── مؤسساتي ── */
 function rMine() {
   const d = done(ROWS);
+  const arch = ARCHIVED
+    ? `<div class="tip amber"><b>${esc(VYEAR)} عام مؤرشف.</b>
+       النتائج معروضة كما وردت في الملفات المركزية، وحُسبت بالمعادلة اللوغاريتمية السابقة
+       ومسطرتها. لا تُقارَن بنقاط المنصة ولا يُدخل فيها تقييم.</div>`
+    : "";
   return `<h3 class="st">مؤسساتي</h3>
-  <p class="sl">${esc(ME.name)} · ${esc(ME.team ?? "")} — ${ROWS.length} مؤسسة مسندة إليك.</p>
+  <p class="sl">${esc(ME.name)} · ${esc(ME.team ?? "")} — ${ROWS.length} مؤسسة مسندة إليك.</p>${arch}
   <div class="kpis">
    <div class="kpi"><div class="lbl">مؤسسة مسندة</div><div class="val">${ROWS.length}</div></div>
    <div class="kpi"><div class="lbl">مكتملة</div><div class="val">${d.length}</div></div>
@@ -205,9 +258,9 @@ function rMine() {
           ? `<span class="pill" style="background:${lvlColor(x.level)};color:#fff">${x.level}</span>`
           : "—"
       }</td>
-      <td style="white-space:nowrap"><button class="btn sm" data-open="${x.id}">${
-        EDITABLE ? "تقييم" : "عرض"
-      }</button>${
+      <td style="white-space:nowrap">${
+        ARCHIVED ? "" : `<button class="btn sm" data-open="${x.id}">${EDITABLE ? "تقييم" : "عرض"}</button>`
+      }${
         EDITABLE && ME.role === "eval" ? `<button class="btn sm ghost" data-move="${x.id}">نقل</button>` : ""
       }</td></tr>`
     ).join("") +
@@ -365,7 +418,9 @@ async function evHistory(id) {
   }
   const c = d.cumulative;
   let h = `<div class="kpis">
-    <div class="kpi"><div class="lbl">دورات مكتملة على المنهجية الحالية</div><div class="val">${d.cycles.length}</div></div>
+    <div class="kpi"><div class="lbl">دورات على المنهجية الحالية</div><div class="val">${
+    d.cycles.filter((x) => !x.archived).length
+  }</div></div>
     <div class="kpi ${c.complete ? "" : "amber"}"><div class="lbl">متوسط آخر ${c.n || "—"} دورة</div>
       <div class="val">${c.avg === null ? "—" : c.avg + "%"}</div></div>
     <div class="kpi"><div class="lbl">التقدير التراكمي</div><div class="val" style="font-size:17px">${
@@ -381,24 +436,53 @@ async function evHistory(id) {
   }
   if (d.cycles.length) {
     h += `<div class="tbl"><table><thead><tr><th style="width:110px">الدورة</th>
+      <th style="width:110px">المنهجية</th>
       <th style="width:90px">النتيجة</th><th style="width:130px">التقدير</th>` +
       [1, 2, 3, 4].map((a) => `<th style="background:${AXC[a]}">محور ${a}</th>`).join("") +
       `</tr></thead><tbody>` +
       d.cycles.map((x) =>
-        `<tr><td class="r">${esc(x.year)}</td><td><b>${x.pct}%</b></td>
+        `<tr><td class="r">${esc(x.year)}</td>
+        <td><span class="pill ${x.archived ? "amber" : "blue"}">${esc(x.basis)}</span></td>
+        <td><b>${x.pct}%</b></td>
         <td style="color:${lvlColor(x.level)};font-weight:700">${x.level}</td>` +
         [1, 2, 3, 4].map((a) => `<td>${x.axes[a] === null ? "—" : x.axes[a] + "%"}</td>`).join("") +
         `</tr>`
       ).join("") + `</tbody></table></div>`;
   }
+  if (d.cycles.length) {
+    h += `<div class="charts">${
+      chartCard("chCyc", "مسار المؤسسة عبر الدورات", "لكل عام لونه المخصص · المؤرشف بمنهجية مختلفة", true)
+    }</div>`;
+  }
   if (d.prev) {
-    h += `<div class="tip">نتيجة الدورة المرجعية <b>${esc(d.prev.year)}</b>:
-      ${d.prev.pct === null ? "—" : d.prev.pct + "%"} · ${esc(d.prev.verdict ?? "—")}.
-      حُسبت بالمعادلة اللوغاريتمية القديمة، فلا تُقارَن بنقاط الحساب الخطي ولا تدخل في المتوسط التراكمي.</div>`;
+    h += `<div class="tip">دورة <b>${esc(d.prev.year)}</b> مؤرشفة من الملفات المركزية
+      بالمعادلة اللوغاريتمية السابقة، فلا تُقارَن بنقاط الحساب الخطي ولا تدخل في المتوسط التراكمي.
+      المقارنة المحورية تبدأ من ثاني دورة تُدخَل في المنصة.</div>`;
   } else {
-    h += `<div class="tip">لا توجد نتيجة مرجعية لهذه المؤسسة في الملفات المركزية.</div>`;
+    h += `<div class="tip">لا توجد نتيجة مؤرشفة لهذه المؤسسة في الملفات المركزية.</div>`;
   }
   box.innerHTML = h;
+  if (!d.cycles.length) return;
+  const cyc = [...d.cycles].reverse();
+  drawChart("chCyc", {
+    type: "bar",
+    data: {
+      labels: cyc.map((c) => c.year),
+      datasets: [{
+        label: "نتيجة المؤسسة",
+        data: cyc.map((c) => c.pct),
+        backgroundColor: cyc.map((c) => yearColor(c.year)),
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { afterLabel: (t) => `المنهجية: ${cyc[t.dataIndex].basis}` } },
+      },
+      scales: { y: { min: 0, max: 100, ticks: { callback: (v) => v + "%" } } },
+    },
+  });
 }
 
 /** حساب محلي للعرض الفوري — الحساب المعتمد يبقى في الخادم ويُعاد بعد الحفظ. */
@@ -582,6 +666,16 @@ function rStats() {
     d.length ? avgOf(d).toFixed(1) + "%" : "—"
   }</div></div>
   </div>
+  <h4 class="blk">الصورة العامة</h4>
+  <div class="charts">
+    ${chartCard("chDist", "توزيع التقديرات", "المؤسسات المكتملة حسب المسطرة المعتمدة")}
+    ${chartCard("chAx", "متوسط نسبة التنفيذ لكل محور", "على المؤسسات المكتملة في هذا النطاق")}
+    ${
+    ME.role === "eval"
+      ? ""
+      : chartCard("chTeam", "نسبة الإنجاز لكل فريق", "المكتمل من إجمالي مؤسسات الفريق", true)
+  }
+  </div>
   <h4 class="blk">التوزيع على التقديرات</h4>
   <div class="card"><div class="seg">` +
     META.rubric.map((b) =>
@@ -612,7 +706,74 @@ function rStats() {
         <td><b>${m.toFixed(1)}%</b></td>
         <td><div class="bar"><i style="width:${m}%;background:${AXC[a]}"></i></div></td></tr>`;
     }).join("") + `</tbody></table></div>`;
+  setTimeout(statsCharts, 0);
   return h;
+}
+
+/** رسوم شاشة الإحصاءات — تُستدعى بعد إدراج الـcanvas في الصفحة. */
+function statsCharts() {
+  const d = done(ROWS);
+  const dist = META.rubric.map((b) => d.filter((x) => x.level === b.n).length);
+  drawChart("chDist", {
+    type: "doughnut",
+    data: {
+      labels: META.rubric.map((b) => b.n),
+      datasets: [{
+        data: dist,
+        backgroundColor: META.rubric.map((b) => lvlColor(b.n)),
+        borderColor: "#fff",
+        borderWidth: 2,
+      }],
+    },
+    options: { cutout: "58%", plugins: { legend: { position: "bottom" } } },
+  });
+  const avgAx = [1, 2, 3, 4].map((a) => {
+    const vs = d.map((x) => x.axes?.[a]).filter((v) => v !== null && v !== undefined);
+    return vs.length ? Math.round(vs.reduce((s, v) => s + v, 0) / vs.length * 10) / 10 : 0;
+  });
+  drawChart("chAx", {
+    type: "bar",
+    data: {
+      labels: [1, 2, 3, 4].map((a) => META.axname[a]),
+      datasets: [{
+        label: "نسبة التنفيذ",
+        data: avgAx,
+        backgroundColor: [1, 2, 3, 4].map((a) => AXC[a]),
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: { x: { min: 0, max: 100, ticks: { callback: (v) => v + "%" } } },
+    },
+  });
+  if (ME.role === "eval") return;
+  const teams = [...new Set(ROWS.map((x) => x.team))];
+  drawChart("chTeam", {
+    type: "bar",
+    data: {
+      labels: teams.map((t) => `${t} · ${META.teamMeta[t]?.code ?? ""}`),
+      datasets: [
+        {
+          label: "مكتملة",
+          data: teams.map((t) => ROWS.filter((x) => x.team === t && x.status === "مكتمل").length),
+          backgroundColor: yearColor(VYEAR),
+          borderRadius: 5,
+        },
+        {
+          label: "لم تكتمل",
+          data: teams.map((t) => ROWS.filter((x) => x.team === t && x.status !== "مكتمل").length),
+          backgroundColor: "#dfe6e0",
+          borderRadius: 5,
+        },
+      ],
+    },
+    options: {
+      plugins: { legend: { position: "bottom" } },
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+    },
+  });
 }
 
 /* ── أعلى 10 وقصص النجاح ── */

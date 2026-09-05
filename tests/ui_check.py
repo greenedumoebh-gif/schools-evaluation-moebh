@@ -88,13 +88,57 @@ with sync_playwright() as p:
     broken = [l for l in logos if l["w"] == 0]
     chk(len(logos) >= 2, f"صور الشعار في الصفحة ({len(logos)})")
     chk(not broken, f"لا شعار مكسور ({[b['s'] for b in broken]})")
+    plat = pg.evaluate(
+        "()=>[...document.querySelectorAll('.lgbox img')].map(i=>i.getAttribute('src'))"
+    )
+    chk(
+        len(plat) == 4 and all("square" in x for x in plat),
+        f"شاشات المنصة تستخدم الشعارين المربعين ({sorted(set(plat))})",
+    )
+    boxes = pg.evaluate(
+        "()=>[...document.querySelectorAll('.sidebar .lgbox')].map(e=>{const r=e.getBoundingClientRect();"
+        "return {w:Math.round(r.width),h:Math.round(r.height)}})"
+    )
+    chk(len(boxes) == 2, f"مربعان للشعارين في الشريط الجانبي ({len(boxes)})")
+    chk(
+        boxes and boxes[0] == boxes[1] and boxes[0]["w"] == boxes[0]["h"],
+        f"المربعان متساويان ومربعان فعلاً ({boxes})",
+    )
+    bgs = pg.evaluate(
+        "()=>[...document.querySelectorAll('.sidebar .lgbox')]"
+        ".map(e=>getComputedStyle(e).backgroundColor)"
+    )
+    chk(all(b == "rgb(255, 255, 255)" for b in bgs), f"خلفية المربعين بيضاء ({bgs})")
+    hdr = pg.evaluate(
+        "()=>{const i=document.querySelector('.printhead .hdr-rect');"
+        "return i? {s:i.getAttribute('src'),w:i.naturalWidth,h:i.naturalHeight}:null}"
+    )
+    chk(
+        hdr and hdr["s"] == "/img/moe.png" and hdr["w"] / hdr["h"] > 3,
+        f"رأس الطباعة يستخدم شعار الوزارة المستطيل ({hdr})",
+    )
+
+    # ألوان الأعوام الثابتة
+    cols = pg.evaluate(
+        "()=>[...document.querySelectorAll('.ytab')].map(b=>[b.dataset.y,b.style.getPropertyValue('--yc')])"
+    )
+    chk(
+        dict(cols).get("2025-2026") == "#6A1B9A" and dict(cols).get("2026-2027") == "#1E7145",
+        f"لكل عام لونه المخصص ({cols})",
+    )
 
     # تبويبات الأعوام
     tabs = pg.locator(".ytab").all_inner_texts()
-    chk(len(tabs) == 4, f"أربعة تبويبات أعوام ({len(tabs)})")
+    chk(len(tabs) == 3, f"تبويبات الأعوام تبدأ من 2025-2026 ({len(tabs)}): {' · '.join(t.split(chr(10))[0] for t in tabs)}")
     chk(pg.locator(".ytab.on").count() == 1, "تبويب واحد مفعّل")
     chk("الجاري" in " ".join(tabs), "وسم العام الجاري ظاهر")
+    chk("مؤرشف" in " ".join(tabs), "وسم العام المؤرشف ظاهر")
+    chk(pg.locator('.ytab[data-y="2026-2027"].on').count() == 1, "العام الجاري 2026-2027 هو المفتوح")
     chk("الإدخال متاح" in pg.locator("#ynote").inner_text(), "شريط الحالة يوضح إتاحة الإدخال")
+    chk(
+        pg.evaluate("()=>typeof Chart") == "function",
+        "مكتبة الرسوم محمّلة محلياً بلا CDN",
+    )
     chk("Z1" in pg.locator("#brandSub").inner_text(), f"رمز الفريق في الشريط الجانبي")
     chk("رقم 1" in pg.locator("#brandSub").inner_text(), "رقم المنطقة في الشريط الجانبي")
 
@@ -102,7 +146,7 @@ with sync_playwright() as p:
     pg.wait_for_selector(".axbox", timeout=15000)
     chk(pg.locator(".axbox").count() == 4, f"أربعة صناديق محاور ({pg.locator('.axbox').count()})")
     chk(pg.locator(".frow").count() == 31, f"31 صف مؤشر ({pg.locator('.frow').count()})")
-    chk(pg.locator(".fld .tgt").count() == 38, f"31 خانة مستهدف + 7 مقامات مركزية ({pg.locator('.fld .tgt').count()})")
+    chk(pg.locator(".fld .tgt").count() == 35, f"31 خانة مستهدف + 4 مقامات مركزية ({pg.locator('.fld .tgt').count()})")
     chk("مركزي" in pg.locator("#modalBody").inner_text(), "المقام المركزي معلَّم في الشاشة")
     chk(pg.locator("select[data-f=j]").count() == 6, f"6 قوائم حالة تنفيذ للمؤشرات الوصفية ({pg.locator('select[data-f=j]').count()})")
     chk(pg.locator("input[data-f=m]").count() == 2, f"خانتان ثانويتان ({pg.locator('input[data-f=m]').count()})")
@@ -139,8 +183,18 @@ with sync_playwright() as p:
     chk("—" not in pg.locator("#evSum table tbody tr").last.inner_text(), "نتيجة المؤسسة محسوبة بعد الاكتمال")
 
     pg.wait_for_selector("#evHist .kpi", timeout=15000)
+    chk(pg.locator("#evHist canvas").count() == 1, "رسم مسار الدورات موجود")
+    cbars = pg.evaluate(
+        "()=>{const c=Chart.getChart('chCyc');return c?{n:c.data.labels.length,"
+        "cols:c.data.datasets[0].backgroundColor}:null}"
+    )
+    chk(
+        cbars and cbars["n"] == 1 and cbars["cols"] == ["#6A1B9A"],
+        f"عمود الدورة المؤرشفة بلون عامها 2025-2026 ({cbars})",
+    )
     chk(pg.locator("#evHist .kpi").count() == 4, f"بطاقات الأداء التراكمي ({pg.locator('#evHist .kpi').count()})")
-    chk("الدورة المرجعية" in pg.locator("#evHist").inner_text(), "النتيجة المرجعية السابقة معروضة")
+    chk("مؤرشفة" in pg.locator("#evHist").inner_text(), "الدورة المؤرشفة معروضة في السجل")
+    chk("لوغاريتمية" in pg.locator("#evHist").inner_text(), "منهجية الدورة المؤرشفة موسومة")
     chk("لا تُقارَن" in pg.locator("#evHist").inner_text(), "تنبيه اختلاف المنهجية ظاهر")
     chk(pg.locator("#evHist .tip.amber").count() == 1, "تنبيه نقص الدورات الثلاث ظاهر")
 
@@ -227,12 +281,51 @@ with sync_playwright() as p:
     pg2.wait_for_timeout(3000)
     chk(pg2.locator("#asBox tbody tr").count() == 152, f"إسناد رياض الأطفال: {pg2.locator('#asBox tbody tr').count()} مؤسسة")
 
-    # ── العام الماضي: عرض فقط ──
+    # ── الإحصاءات ورسومها ──
     pg.evaluate("()=>document.getElementById('modal').classList.remove('on')")
-    pg.locator('.ytab[data-y="2024-2025"]').click()
+    pg.locator('#nav a[data-s="stats"]').click()
+    pg.wait_for_selector("#content canvas", timeout=15000)
+    pg.wait_for_timeout(600)
+    nch = pg.locator("#content .chartcard canvas").count()
+    chk(nch == 2, f"رسما شاشة الإحصاءات للمقيّم ({nch})")
+    ch = pg.evaluate(
+        "()=>{const d=Chart.getChart('chDist'),a=Chart.getChart('chAx');"
+        "return {dist:d?d.data.datasets[0].data:null, distCols:d?d.data.datasets[0].backgroundColor:null,"
+        "ax:a?a.data.datasets[0].data:null, axLabels:a?a.data.labels:null}}"
+    )
+    chk(ch["dist"] and sum(ch["dist"]) > 0, f"رسم التقديرات فيه بيانات ({ch['dist']})")
+    chk(
+        ch["distCols"] == ["#C0392B", "#d98324", "#7aa63f", "#1E7145"],
+        f"ألوان التقديرات تتبع نظام التصميم ({ch['distCols']})",
+    )
+    chk(len(ch["ax"]) == 4 and len(ch["axLabels"]) == 4, "رسم المحاور أربعة أعمدة")
+    chk(
+        ch["axLabels"] == [
+            "التعليم والتعلم الأخضر",
+            "البيئة التعليمية الخضراء",
+            "تنمية القدرات الخضراء",
+            "الشراكة المجتمعية الخضراء",
+        ],
+        f"أسماء المحاور عربية كاملة في الرسم ({ch['axLabels'][0]})",
+    )
+
+    # ── العام المؤرشف 2025-2026 ──
+    pg.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    pg.locator('#nav a[data-s="mine"]').click()
+    pg.wait_for_timeout(1500)
+    pg.locator('.ytab[data-y="2025-2026"]').click()
     pg.wait_for_timeout(2500)
-    chk("عرض فقط" in pg.locator("#ynote").inner_text(), "العام السابق: عرض فقط")
-    chk(pg.locator("[data-move]").count() == 0, "لا زر نقل في عام غير جارٍ")
+    chk("مؤرشف" in pg.locator("#ynote").inner_text(), "شريط الحالة يوضح أن العام مؤرشف")
+    chk(pg.locator(".tip.amber").count() >= 1, "لافتة العام المؤرشف ظاهرة")
+    chk(pg.locator("[data-open]").count() == 0, "لا زر تقييم في العام المؤرشف")
+    chk(pg.locator("[data-move]").count() == 0, "لا زر نقل في العام المؤرشف")
+    ev = pg.locator("#content tbody tr").first.inner_text()
+    chk("مكتمل" in ev and "مستدام" in ev, f"المؤسسة تظهر مقيَّمة بنتيجة الملف المركزي")
+
+    # ── العام القادم: عرض فقط ──
+    pg.locator('.ytab[data-y="2027-2028"]').click()
+    pg.wait_for_timeout(2500)
+    chk("عرض فقط" in pg.locator("#ynote").inner_text(), "العام القادم: عرض فقط")
     pg.locator("[data-open]").first.click()
     pg.wait_for_selector(".axbox", timeout=15000)
     chk(pg.locator("#evSave").count() == 0, "لا زر حفظ في عام غير جارٍ")
