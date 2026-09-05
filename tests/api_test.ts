@@ -24,6 +24,40 @@ const call = (sid: string, path: string, method = "GET", body?: unknown) =>
     body: body ? JSON.stringify(body) : undefined,
   });
 
+// ── بناء مدخلات المؤشرات التفصيلية ──
+interface KpiDef {
+  n: number;
+  mode: string;
+  denom: string | null;
+  tgtEff: number;
+  secEff: number | null;
+}
+const kpiCache: Record<string, KpiDef[]> = {};
+async function kpiDefs(sid: string, instId: string): Promise<KpiDef[]> {
+  if (!kpiCache[instId]) {
+    kpiCache[instId] = (await (await call(sid, "/api/kpis?inst=" + instId)).json()).kpis;
+  }
+  return kpiCache[instId];
+}
+/** مدخلات تُنتج نسبة تنفيذ v لكل مؤشر. الوصفي يقرَّب إلى 0 أو 50 أو 100. */
+function rawFor(defs: KpiDef[], v: number, skipLast = 0): Record<string, unknown> {
+  const kpi: Record<string, unknown> = {};
+  const upto = defs.length - skipLast;
+  defs.slice(0, upto).forEach((k) => {
+    if (k.mode === "وصفي") {
+      kpi[k.n] = { j: v >= 75 ? 100 : v >= 25 ? 50 : 0 };
+    } else if (k.mode === "نسبة" && k.denom) {
+      kpi[k.n] = { i: 1000, j: 10 * k.tgtEff * v / 100 };
+    } else {
+      kpi[k.n] = { j: k.tgtEff * v / 100 };
+    }
+    if (k.secEff !== null) {
+      (kpi[k.n] as Record<string, unknown>).m = k.secEff * v / 100;
+    }
+  });
+  return kpi;
+}
+
 console.log("■ المصادقة");
 chk((await login("Z1-1", "wrong-password")).status === 401, "كلمة مرور خاطئة تُرفض");
 chk((await login("NOPE")).status === 401, "حساب غير موجود يُرفض");
@@ -59,42 +93,273 @@ chk((await call(tech.sid, "/api/accounts")).status === 200, "الفني يصل �
 
 console.log("\n■ حفظ التقييم");
 const mine = iv1.rows[0];
+const defs = await kpiDefs(ev1.sid, mine.id);
+chk(defs.length === 31, `تعريف المؤشرات التفصيلية وصل (${defs.length})`);
+chk(
+  (await call(ev1.sid, "/api/kpis?inst=" + iv2.rows[0].id)).status === 403,
+  "المقيّم لا يقرأ مؤشرات مؤسسة ليست له (403)",
+);
 const save = await (await call(ev1.sid, "/api/evaluation", "POST", {
   instId: mine.id,
-  axes: { 1: 90, 2: 90, 3: 90, 4: 90 },
+  kpi: rawFor(defs, 100),
   notes: "اختبار",
 })).json();
-chk(save.ok && save.status === "مكتمل" && save.pct === 90, `حفظ تقييم كامل → ${save.pct}% · ${save.status}`);
+chk(
+  save.ok && save.status === "مكتمل" && save.filled === 31 && save.pct === 100,
+  `حفظ تقييم كامل → ${save.pct}% · ${save.status} · ${save.filled}/${save.total}`,
+);
 const partial = await (await call(ev1.sid, "/api/evaluation", "POST", {
   instId: mine.id,
-  axes: { 1: 80, 2: 80, 3: 80, 4: null },
+  kpi: rawFor(defs, 80, 3),
 })).json();
-chk(partial.status === "قيد التقييم", "محور ناقص → قيد التقييم");
-await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, axes: { 1: 90, 2: 90, 3: 90, 4: 90 } });
+chk(
+  partial.status === "قيد التقييم" && partial.filled === 28 && partial.pct === null,
+  `مؤشرات ناقصة → ${partial.status} · ${partial.filled}/${partial.total}`,
+);
+await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: rawFor(defs, 90) });
 const foreign = await call(ev2.sid, "/api/evaluation", "POST", {
   instId: mine.id,
-  axes: { 1: 10, 2: 10, 3: 10, 4: 10 },
+  kpi: rawFor(defs, 10),
 });
 chk(foreign.status === 403, "مقيّم آخر لا يستطيع تعديل مؤسسة ليست له (403)");
 const leadWrite = await call(lead1.sid, "/api/evaluation", "POST", {
   instId: mine.id,
-  axes: { 1: 5, 2: 5, 3: 5, 4: 5 },
+  kpi: rawFor(defs, 5),
 });
 chk(leadWrite.status === 403, "رئيس الفريق لا يُدخل تقييماً (403)");
 const clamp = await (await call(ev1.sid, "/api/evaluation", "POST", {
   instId: mine.id,
-  axes: { 1: 500, 2: -30, 3: 90, 4: 90 },
+  kpi: rawFor(defs, 300),
 })).json();
-chk(clamp.pct !== null && clamp.pct <= 100, `القيم تُقيَّد بين 0 و100 → ${clamp.pct}%`);
-await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, axes: { 1: 95, 2: 95, 3: 95, 4: 95 } });
+chk(clamp.pct === 100, `تجاوز المستهدف لا يتجاوز 100% → ${clamp.pct}%`);
+const bad = await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: { 1: { i: 10, j: -5 } },
+});
+chk(bad.status === 400, "قيمة سالبة تُرفض (400)");
+const badState = await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: { 12: { j: 33 } },
+});
+chk(badState.status === 400, "حالة تنفيذ خارج (0 · 50 · 100) تُرفض (400)");
+await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: rawFor(defs, 95) });
+
+console.log("\n■ تصنيف المؤسسات مقابل الملفات المركزية");
+const all = (await (await call(tech.sid, "/api/institutions")).json()).rows;
+chk(all.length === 378, `العدد الكلي ${all.length}`);
+const sizeRule = (n: number, kg: boolean): string =>
+  kg
+    ? (n <= 25
+      ? "الروضة الصغيرة"
+      : n <= 100
+      ? "الروضة المتوسطة"
+      : n <= 200
+      ? "الروضة الكبيرة"
+      : "الروضة الكبيرة جداً")
+    : (n <= 399
+      ? "المدرسة الصغيرة"
+      : n <= 699
+      ? "المدرسة المتوسطة"
+      : n <= 999
+      ? "المدرسة الكبيرة"
+      : "المدرسة الكبيرة جداً");
+const sized = all.filter((x: { size: string | null }) => x.size !== null);
+const sizeBad = sized.filter((x: { size: string; students: number; team: string }) =>
+  x.size.replace(/\s+/g, " ") !== sizeRule(x.students, x.team === "رياض الأطفال")
+);
+chk(sized.length === 243, `مؤسسات لها تصنيف حجم في المصدر: ${sized.length}`);
+chk(
+  sizeBad.length === 1 && sizeBad[0].name === "مدرسة ابنيزر",
+  `مخالفة واحدة معلومة لقاعدة التصنيف: ${sizeBad.map((x: { name: string }) => x.name).join(" · ")}`,
+);
+const kg = all.filter((x: { team: string }) => x.team === "رياض الأطفال");
+chk(
+  kg.length === 152 && kg.every((x: { stage: string }) => x.stage === "رياض أطفال"),
+  "رياض الأطفال مرحلة قائمة بذاتها لكل مؤسساتها",
+);
+const noStage = all.filter((x: { stage: string | null }) => x.stage === null);
+chk(noStage.length === 0, `لا مؤسسة بلا مرحلة (${noStage.length})`);
+const noSize = all.filter((x: { size: string | null }) => x.size === null);
+chk(
+  noSize.length === 135 && noSize.every((x: { team: string }) => x.team === "رياض الأطفال"),
+  `بلا تصنيف حجم في المصدر: ${noSize.length} كلها رياض أطفال`,
+);
+const withPrev = all.filter((x: { prev: unknown }) => x.prev !== null);
+chk(withPrev.length === 243, `مؤسسات لها نتيجة مرجعية سابقة: ${withPrev.length}`);
+const stages = new Set(
+  all.filter((x: { team: string }) => x.team !== "رياض الأطفال").map((x: { stage: string }) => x.stage),
+);
+chk(stages.has("ابتدائي - إعدادي") && stages.has("ثانوي (صناعي)"), "المراحل المركّبة محفوظة حرفياً");
+chk(!stages.has("متعدد المراحل"), "لا تسميات مجمَّعة من صنعنا");
+
+console.log("\n■ المؤشر 20 حسب المرحلة");
+async function t20(id: string, sid: string) {
+  const d = await (await call(sid, "/api/kpis?inst=" + id)).json();
+  const k = d.kpis.find((x: { n: number }) => x.n === 20);
+  return { tgt: k.tgtEff, assumed: k.assumed };
+}
+const prim = await t20("Z1-001", tech.sid); // ابتدائي
+const upper = await t20("Z1-006", tech.sid); // إعدادي
+const mixed = await t20("Z1-007", tech.sid); // ابتدائي - إعدادي
+const relig = await t20("Z4-024", tech.sid); // معهد ديني بلا مرحلة
+chk(prim.tgt === 4 && !prim.assumed, `ابتدائي → ${prim.tgt} · محسوم`);
+chk(upper.tgt === 8 && !upper.assumed, `إعدادي → ${upper.tgt} · محسوم`);
+chk(mixed.tgt === 8 && !mixed.assumed, `ابتدائي - إعدادي → المرحلة العليا إعدادي → ${mixed.tgt} · محسوم`);
+chk(relig.tgt === 8 && !relig.assumed, `المعهد الديني الجعفري → ثانوي بقرار الفريق → ${relig.tgt} · محسوم`);
+const prim2 = await t20("Z4-022", tech.sid); // ابتدائي (معهد ديني)
+chk(prim2.tgt === 4 && !prim2.assumed, `ابتدائي (معهد ديني) → ${prim2.tgt} · محسوم`);
+const upper2 = await t20("Z4-023", tech.sid); // إعدادي - ثانوي (معهد ديني)
+chk(upper2.tgt === 8 && !upper2.assumed, `إعدادي - ثانوي (معهد ديني) → ${upper2.tgt} · محسوم`);
+const noLevel = all
+  .filter((r: { team: string; stage: string | null; stageTop: string | null }) =>
+    r.team !== "رياض الأطفال" && !/ابتدائي|إعدادي|ثانوي/.test(r.stage ?? "") && !r.stageTop
+  ).map((r: { id: string }) => r.id);
+chk(noLevel.length === 0, `لا مؤسسة نظامية بلا مرحلة عليا: ${noLevel.join(" · ") || "صفر"}`);
+const jaafari = all.find((r: { id: string }) => r.id === "Z4-024");
+chk(
+  jaafari.stage === "معهد ديني" && jaafari.stageTop === "ثانوي",
+  "نص المرحلة يبقى كما في المصدر وقرار الفريق منفصل عنه",
+);
+
+console.log("\n■ ضبط المستهدفات");
+chk(
+  (await call(lead1.sid, "/api/targets", "POST", { stage: "school", targets: {} })).status === 403,
+  "رئيس الفريق لا يضبط المستهدفات (403)",
+);
+const tgSave = await (await call(tech.sid, "/api/targets", "POST", {
+  stage: "school",
+  targets: { 27: { t: 4 } },
+})).json();
+chk(tgSave.ok && tgSave.count === 1, `الحساب الفني يضبط مستهدفاً واحداً (${tgSave.count})`);
+delete kpiCache[mine.id];
+const defs2 = await kpiDefs(ev1.sid, mine.id);
+chk(defs2.find((k) => k.n === 27)!.tgtEff === 4, "المستهدف المضبوط يظهر في تعريف المؤشرات");
+const tgBad = await call(tech.sid, "/api/targets", "POST", {
+  stage: "school",
+  targets: { 27: { t: 0 } },
+});
+chk(tgBad.status === 400, "مستهدف صفري يُرفض (400)");
+await call(tech.sid, "/api/targets", "POST", { stage: "school", targets: {} });
+delete kpiCache[mine.id];
+
+console.log("\n■ الدورات والأداء التراكمي");
+const meNow = await (await call(tech.sid, "/api/me")).json();
+chk(meNow.meta.currentYear === "2025-2026", `العام الجاري ${meNow.meta.currentYear}`);
+const hist1 = await (await call(ev1.sid, "/api/history?inst=" + mine.id)).json();
+chk(hist1.cycles.length === 1 && hist1.cycles[0].year === "2025-2026", "دورة واحدة مكتملة");
+chk(
+  hist1.cumulative.n === 1 && hist1.cumulative.complete === false,
+  "الحسم التراكمي غير مكتمل بدورة واحدة",
+);
+chk(
+  hist1.prev !== null && hist1.prev.basis === "لوغاريتمية",
+  `النتيجة المرجعية موجودة وموسومة بمنهجيتها (${hist1.prev?.verdict})`,
+);
+chk(
+  (await call(ev2.sid, "/api/history?inst=" + mine.id)).status === 403,
+  "سجل مؤسسة خارج النطاق مرفوض (403)",
+);
+chk(
+  (await call(lead1.sid, "/api/year", "POST", { year: "2026-2027" })).status === 403,
+  "رئيس الفريق لا يغيّر العام (403)",
+);
+chk(
+  (await call(tech.sid, "/api/year", "POST", { year: "2026" })).status === 400,
+  "صيغة عام خاطئة تُرفض (400)",
+);
+await call(tech.sid, "/api/year", "POST", { year: "2026-2027" });
+const y2 = await (await call(ev1.sid, "/api/institutions")).json();
+chk(
+  y2.year === "2026-2027" && y2.rows.find((r: { id: string }) => r.id === mine.id).status === "لم يبدأ",
+  "العام الجديد يبدأ بصفحة بيضاء ولا يمسّ الدورة السابقة",
+);
+await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: rawFor(defs, 60) });
+const hist2 = await (await call(ev1.sid, "/api/history?inst=" + mine.id)).json();
+chk(hist2.cycles.length === 2, `دورتان محفوظتان (${hist2.cycles.length})`);
+chk(
+  hist2.cumulative.n === 2 && hist2.cumulative.avg !== null && hist2.cumulative.trend !== null,
+  `متوسط دورتين ${hist2.cumulative.avg}% · الفرق ${hist2.cumulative.trend}`,
+);
+await call(tech.sid, "/api/year", "POST", { year: "2025-2026" });
+const back = await (await call(ev1.sid, "/api/institutions")).json();
+chk(
+  back.rows.find((r: { id: string }) => r.id === mine.id).status === "مكتمل",
+  "الرجوع للعام السابق يستعيد تقييمه كما هو",
+);
+
+console.log("\n■ تعديل نص المؤشر");
+const txtSave = await (await call(tech.sid, "/api/targets", "POST", {
+  stage: "school",
+  targets: { 3: { kpi: "نص مؤشر معدَّل من الحساب الفني", numer: "بسط معدَّل" } },
+})).json();
+chk(txtSave.ok && txtSave.text === 1, `حُفظ تعديل نصي واحد (${txtSave.text})`);
+delete kpiCache[mine.id];
+const defs3 = await (await call(ev1.sid, "/api/kpis?inst=" + mine.id)).json();
+const k3 = defs3.kpis.find((x: { n: number }) => x.n === 3);
+chk(
+  k3.kpi === "نص مؤشر معدَّل من الحساب الفني" && k3.numer === "بسط معدَّل" && k3.edited === true,
+  "النص المعدَّل يصل للمقيّم موسوماً بأنه معدَّل",
+);
+chk(
+  defs3.kpis.find((x: { n: number }) => x.n === 1).edited === false,
+  "المؤشرات غير المعدَّلة تبقى بنص الخطة",
+);
+const longTxt = await call(tech.sid, "/api/targets", "POST", {
+  stage: "school",
+  targets: { 3: { kpi: "x".repeat(3100) } },
+});
+chk(longTxt.status === 400, "نص أطول من 3000 حرف يُرفض (400)");
+await call(tech.sid, "/api/targets", "POST", { stage: "school", targets: {} });
+delete kpiCache[mine.id];
+
+console.log("\n■ إدارة الحسابات والإسناد");
+chk(
+  (await call(lead1.sid, "/api/account", "POST", { id: "Z1-1", name: "س" })).status === 403,
+  "رئيس الفريق لا يعدّل الحسابات (403)",
+);
+const accSave = await call(tech.sid, "/api/account", "POST", {
+  id: "Z1-3",
+  name: "منسقة تجريبية",
+  title: "عضو فريق تقييم",
+  team: "منطقة 1",
+});
+chk(accSave.status === 200, "الحساب الفني يعدّل بيانات الحساب");
+const accs = (await (await call(tech.sid, "/api/accounts")).json()).accounts;
+chk(
+  accs.find((a: { id: string }) => a.id === "Z1-3").name === "منسقة تجريبية",
+  "الاسم الجديد محفوظ",
+);
+chk(
+  (await call(tech.sid, "/api/account", "POST", { id: "Z1-3", team: "منطقة 9" })).status === 400,
+  "فريق غير معروف يُرفض (400)",
+);
+chk(
+  (await call(tech.sid, "/api/assign", "POST", { instId: "Z2-001", evaluator: "Z1-1" })).status === 400,
+  "مقيّم من فريق آخر يُرفض (400)",
+);
+const asOk = await call(tech.sid, "/api/assign", "POST", { instId: "Z1-002", evaluator: "Z1-5" });
+chk(asOk.status === 200, "إعادة إسناد مؤسسة داخل فريقها");
+const moved = await (await call(tech.sid, "/api/assign", "POST", {
+  instId: "Z1-002",
+  team: "رياض الأطفال",
+  evaluator: "KG-1",
+})).json();
+chk(moved.ok && moved.evalCleared === true, "النقل بين النظامي والمبكر يحذف التقييم");
+const movedRow = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === "Z1-002");
+chk(
+  movedRow.team === "رياض الأطفال" && movedRow.totalKpi === 25,
+  `المؤسسة المنقولة صارت على 25 مؤشراً (${movedRow.totalKpi})`,
+);
+await call(tech.sid, "/api/assign", "POST", { instId: "Z1-002", team: "منطقة 1", evaluator: "Z1-2" });
 
 console.log("\n■ تهيئة بيانات كافية لأعلى 10");
-// أدخل تقييمات مكتملة بنتائج متفاوتة حتى تكتمل قائمة أعلى 10
 const seedRows = iv1.rows.slice(0, 12);
 let si = 0;
 for (const r of seedRows) {
   const v = 96 - si * 3;
-  await call(ev1.sid, "/api/evaluation", "POST", { instId: r.id, axes: { 1: v, 2: v, 3: v, 4: v } });
+  const d = await kpiDefs(ev1.sid, r.id);
+  await call(ev1.sid, "/api/evaluation", "POST", { instId: r.id, kpi: rawFor(d, v) });
   si++;
 }
 chk(si === 12, `تهيئة ${si} تقييماً مكتملاً`);

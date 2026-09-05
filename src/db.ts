@@ -1,8 +1,23 @@
 // طبقة البيانات — Deno KV
 import seed from "../data/seed.json" with { type: "json" };
 
-// مسار قاعدة البيانات: افتراضي على Deno Deploy، وقابل للضبط محلياً وللاختبارات
-export const kv = await Deno.openKv(Deno.env.get("KV_PATH") || undefined);
+// مسار قاعدة البيانات: افتراضي على Deno Deploy، وقابل للضبط محلياً وللاختبارات.
+// لا نُسقط الإقلاع عند فشل الاتصال، بل نحفظ الخطأ لتُعرض صفحة تشخيص مفهومة.
+let _kv: Deno.Kv | null = null;
+let _kvError: string | null = null;
+try {
+  if (typeof Deno.openKv !== "function") {
+    throw new Error(
+      "Deno.openKv غير متاح. على Deno Deploy: جهّز قاعدة Deno KV واربطها بالتطبيق. محلياً: استخدم deno task start.",
+    );
+  }
+  _kv = await Deno.openKv(Deno.env.get("KV_PATH") || undefined);
+} catch (e) {
+  _kvError = e instanceof Error ? e.message : String(e);
+  console.error("[خطأ] تعذّر فتح قاعدة البيانات:", _kvError);
+}
+export const kvError = _kvError;
+export const kv = _kv as Deno.Kv;
 
 export type Role = "eval" | "lead" | "tech";
 export interface Account {
@@ -18,15 +33,43 @@ export interface Account {
 export interface Inst {
   id: string;
   name: string;
+  /** الاسم داخل استمارة التقييم كما ورد في الملف المركزي — قد يختلف عن اسم المجلد */
+  inner: string | null;
   team: string;
-  stage: string;
-  gender: string;
-  students: number;
+  /** المرحلة كما وردت حرفياً في الملف المركزي، وnull إذا كانت غائبة عنه */
+  stage: string | null;
+  gender: string | null;
+  /** المرحلة العليا المعتمدة بقرار الفريق حين لا يذكر نص المرحلة أي مستوى */
+  stageTop: string | null;
+  students: number | null;
+  /** تصنيف الحجم من الملف المركزي: صغيرة 30–399 · متوسطة 400–699 · كبيرة 700–999 · كبيرة جداً 1000+ */
+  size: string | null;
+  /** نتيجة الدورة السابقة كما وردت في الملفات المركزية — مرجع للمقارنة فقط */
+  prev: PrevCycle | null;
   evaluator: string;
 }
+/**
+ * نتيجة دورة سابقة. `basis` يوثّق منهجية حسابها: النتائج المحسوبة بالمعادلة
+ * اللوغاريتمية لا تقارَن بنقاط الحساب الخطي إلا على مستوى التقدير والنسبة.
+ */
+export interface PrevCycle {
+  year: string;
+  ax: Record<string, number | null>;
+  pts: number | null;
+  pct: number | null;
+  verdict: string | null;
+  basis: string;
+}
+
 export interface Evaluation {
   instId: string;
+  /** العام الدراسي الذي يخص هذه الدورة */
+  year: string;
+  /** المدخلات الخام لكل مؤشر: المفتاح رقم المؤشر — i المقام · j البسط أو القيمة · m القيمة الثانوية */
+  kpi: Record<string, { i?: string; j?: string; m?: string }>;
+  /** نسب المحاور — محسوبة في الخادم، لا تُقبل من العميل */
   axes: Record<string, number | null>;
+  filled: number;
   status: "لم يبدأ" | "قيد التقييم" | "مكتمل";
   notes?: string;
   by: string;
@@ -50,6 +93,12 @@ export const META = seed as unknown as {
   axname: Record<string, string>;
   rubric: { n: string; a: number; b: number }[];
   year: string;
+  cap: Record<string, number>;
+  stageKpi: { school: number; kg: number | null };
+  states: { v: number; name: string }[];
+  // deno-lint-ignore no-explicit-any
+  kpi: Record<string, any[]>;
+  sizeRule: Record<string, [string, number, number | null][]>;
 };
 
 // ── تشفير كلمات المرور: PBKDF2-SHA256 ──
@@ -84,19 +133,56 @@ function initialPassword(): string {
 }
 
 export async function seedIfEmpty() {
+  if (!_kv) return { seeded: false, reset: false, error: _kvError };
   const done = await kv.get<boolean>(["seeded"]);
-  if (done.value) return { seeded: false };
+  await migrateEvalSchema();
+
+  // إعادة ضبط كلمات المرور: غيّر قيمة SEED_RESET في متغيرات البيئة لتنفيذها مرة واحدة.
+  // تفيد إذا شُغّلت المنصة قبل ضبط SEED_PASSWORD أو فُقدت كلمة مرور الحساب الفني.
+  const resetToken = Deno.env.get("SEED_RESET") ?? "";
+  const lastToken = (await kv.get<string>(["reset_token"])).value ?? "";
+  const doReset = done.value && resetToken !== "" && resetToken !== lastToken;
+
+  if (done.value && !doReset) return { seeded: false, reset: false };
+
   const pw = initialPassword();
   let n = 0;
   for (const a of META.accounts) {
     const salt = newSalt();
     const hash = await hashPw(pw, salt);
-    await kv.set(["account", a.id], { ...a, salt, hash, mustChange: true });
+    const prev = (await kv.get<Account>(["account", a.id])).value;
+    // عند إعادة الضبط نحتفظ ببيانات الحساب ونغيّر كلمة المرور فقط
+    await kv.set(["account", a.id], { ...(prev ?? a), salt, hash, mustChange: true });
     n++;
   }
-  for (const i of META.inst) await kv.set(["inst", i.id], i);
+  if (!done.value) { for (const i of META.inst) await kv.set(["inst", i.id], i); }
   await kv.set(["seeded"], true);
-  return { seeded: true, accounts: n, inst: META.inst.length };
+  if (resetToken) await kv.set(["reset_token"], resetToken);
+
+  if (doReset) {
+    console.warn(`[إعادة ضبط] أُعيدت كلمات مرور ${n} حساباً. التقييمات والقصص لم تُمس.`);
+    return { seeded: false, reset: true, accounts: n };
+  }
+  return { seeded: true, reset: false, accounts: n, inst: META.inst.length };
+}
+
+/**
+ * ترقية بنية التقييم من «4 نسب محاور» إلى «مؤشرات تفصيلية».
+ * التقييمات السابقة تجريبية بالكامل فتُحذف مرة واحدة. المؤسسات والحسابات
+ * والاختيارات وقصص النجاح لا تُمس.
+ */
+export const EVAL_SCHEMA = 3;
+export async function migrateEvalSchema() {
+  const cur = (await kv.get<number>(["eval_schema"])).value ?? 1;
+  if (cur >= EVAL_SCHEMA) return { migrated: false, deleted: 0 };
+  let n = 0;
+  for await (const e of kv.list({ prefix: ["eval"] })) {
+    await kv.delete(e.key);
+    n++;
+  }
+  await kv.set(["eval_schema"], EVAL_SCHEMA);
+  if (n) console.warn(`[ترقية] حُذف ${n} تقييماً تجريبياً بعد تغيير بنية التقييم إلى المؤشرات التفصيلية.`);
+  return { migrated: true, deleted: n };
 }
 
 export async function getAccount(id: string): Promise<Account | null> {
@@ -115,13 +201,26 @@ export async function listInst(): Promise<Inst[]> {
   for await (const e of kv.list<Inst>({ prefix: ["inst"] })) out.push(e.value);
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
-export async function getEvals(): Promise<Record<string, Evaluation>> {
+/** العام الدراسي الجاري — قابل للتغيير من الحساب الفني، وافتراضه عام الخطة. */
+export async function currentYear(): Promise<string> {
+  return (await kv.get<string>(["settings", "year"])).value ?? META.year;
+}
+export async function setCurrentYear(y: string) {
+  await kv.set(["settings", "year"], y);
+}
+/** الأعوام التي تحمل تقييمات محفوظة، الأحدث أولاً. */
+export async function listYears(): Promise<string[]> {
+  const set = new Set<string>();
+  for await (const e of kv.list<Evaluation>({ prefix: ["eval"] })) set.add(String(e.key[1]));
+  return [...set].sort().reverse();
+}
+export async function getEvals(year: string): Promise<Record<string, Evaluation>> {
   const out: Record<string, Evaluation> = {};
-  for await (const e of kv.list<Evaluation>({ prefix: ["eval"] })) out[e.value.instId] = e.value;
+  for await (const e of kv.list<Evaluation>({ prefix: ["eval", year] })) out[e.value.instId] = e.value;
   return out;
 }
 export async function setEval(ev: Evaluation) {
-  await kv.set(["eval", ev.instId], ev);
+  await kv.set(["eval", ev.year, ev.instId], ev);
 }
 export async function listStories(): Promise<Story[]> {
   const out: Story[] = [];

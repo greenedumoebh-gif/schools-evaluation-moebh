@@ -49,7 +49,7 @@ export function cookieHeader(sid: string, secure: boolean): string {
 export const PERMS: Record<Role, string[]> = {
   eval: ["mine", "stats", "eval:write"],
   lead: ["team", "stats", "top", "reports", "picks:write", "story:write"],
-  tech: ["tech", "team", "stats", "top", "reports", "accounts:write", "audit:read"],
+  tech: ["tech", "team", "stats", "top", "reports", "accounts:write", "audit:read", "targets:write"],
 };
 export function can(acc: Account, perm: string): boolean {
   return PERMS[acc.role].includes(perm);

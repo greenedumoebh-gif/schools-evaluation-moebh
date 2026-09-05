@@ -11,6 +11,8 @@ const SECS = {
   tech: ["الحساب الفني", "الحسابات والصلاحيات وسجل التدقيق", "⚙"],
 };
 let ME = null, META = null, PERMS = [], SEC = null, ROWS = [], TOP = null;
+let TGT = null, TGSTAGE = "school";
+const TGDEFS = {};
 
 const fmt = (n, d = 0) =>
   Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -135,12 +137,14 @@ function rMine() {
   }</div></div>
   </div>
   <div class="tbl"><table><thead><tr><th style="width:78px">الرمز</th><th>المؤسسة</th>
-   <th style="width:105px">المرحلة</th><th style="width:75px">الجنس</th><th style="width:70px">الطلبة</th>
+   <th style="width:120px">المرحلة</th><th style="width:70px">الجنس</th><th style="width:62px">الطلبة</th>
+   <th style="width:110px">التصنيف</th>
    <th style="width:105px">الحالة</th><th style="width:72px">النتيجة</th><th style="width:115px">التقدير</th>
    <th style="width:80px"></th></tr></thead><tbody>` +
     ROWS.map((x) =>
       `<tr><td class="mono">${x.id}</td><td class="r">${esc(x.name)}</td>
-      <td>${esc(x.stage)}</td><td>${esc(x.gender)}</td><td>${x.students || "—"}</td>
+      <td>${esc(x.stage ?? "غير مسجَّل")}</td><td>${esc(x.gender ?? "غير مسجَّل")}</td>
+      <td>${x.students ?? "—"}</td><td>${esc(x.size ?? "—")}</td>
       <td><span class="pill" style="background:${SC[x.status]}22;color:${
         SC[x.status]
       }">${x.status}</span></td>
@@ -155,85 +159,275 @@ function rMine() {
     `</tbody></table></div>`;
 }
 
-/* ── شاشة إدخال التقييم ── */
-function openEval(id) {
+/* ── شاشة إدخال التقييم — المؤشرات التفصيلية ── */
+const MODEP = { "نسبة": "blue", "عدد": "amber", "وصفي": "purple" };
+let EV = null; // { inst, defs, raw }
+
+async function openEval(id) {
   const x = ROWS.find((r) => r.id === id);
-  $("#modalBody").innerHTML = `
-   <div class="mhead"><div>
-     <div style="font-size:12px;opacity:.85">${x.id} · ${esc(x.team)} · ${esc(x.stage)} · ${
-    esc(x.gender)
-  }</div>
+  $("#modalBody").innerHTML =
+    `<div class="mbody" style="text-align:center;color:var(--muted)">جارٍ تحميل المؤشرات…</div>`;
+  $("#modal").classList.add("on");
+  let K;
+  try {
+    K = await api("/api/kpis?inst=" + encodeURIComponent(id));
+  } catch (e) {
+    $("#modalBody").innerHTML = `<div class="mbody"><div class="tip red">${esc(e.message)}</div></div>`;
+    return;
+  }
+  EV = { inst: x, defs: K, raw: JSON.parse(JSON.stringify(x.kpi || {})) };
+  const assumed = K.kpis.filter((k) => k.assumed).map((k) => k.n);
+  const tuned = K.kpis.filter((k) => k.tgtEff !== k.tgtBase).map((k) => k.n);
+
+  let h = `<div class="mhead"><div>
+     <div style="font-size:12px;opacity:.85">${x.id} · ${esc(x.team)} · ${esc(x.stage ?? "مرحلة غير مسجَّلة")}${
+    x.stageTop ? " ← " + esc(x.stageTop) : ""
+  } · ${esc(x.gender ?? "جنس غير مسجَّل")}${x.size ? " · " + esc(x.size) : ""}</div>
      <div style="font-size:16px;font-weight:800;margin-top:3px">${esc(x.name)}</div></div>
      <button class="btn" style="background:rgba(255,255,255,.2)" id="mClose">إغلاق</button></div>
    <div class="mbody">
-     <div class="tip">أدخل نسبة تنفيذ كل محور من 0 إلى 100. النقاط = وزن المحور × النسبة، والتقدير يظهر بعد استكمال المحاور الأربعة.</div>
-     <div class="tbl"><table><thead><tr><th>المحور</th><th style="width:95px">الوزن</th>
-      <th style="width:120px">نسبة التنفيذ %</th><th style="width:95px">النقاط</th></tr></thead><tbody>` +
-    [1, 2, 3, 4].map((a) =>
-      `<tr><td class="r" style="border-right:4px solid ${AXC[a]}">${esc(META.axname[a])}</td>
-       <td>${fmt(x.axw[a])}</td>
-       <td><input type="number" min="0" max="100" step="0.1" id="ax${a}"
-         value="${x.axes && x.axes[a] !== null && x.axes[a] !== undefined ? x.axes[a] : ""}"
-         style="width:96px" class="axin"></td>
-       <td id="pt${a}">—</td></tr>`
-    ).join("") +
-    `<tr style="background:var(--green-l);font-weight:800"><td class="r">النتيجة</td>
-       <td>${fmt(x.cap)}</td><td id="evPct">—</td><td id="evLvl">—</td></tr>
-     </tbody></table></div>
-     <label style="font-size:12px;font-weight:700;color:var(--muted);display:block;margin-bottom:5px">ملاحظات المقيّم</label>
-     <textarea id="evNotes" rows="3">${esc(x.notes ?? "")}</textarea>
-     <div style="display:flex;gap:9px;margin-top:15px;flex-wrap:wrap">
-       <button class="btn" id="evSave">حفظ التقييم</button>
-       <button class="btn ghost" id="evCancel">إلغاء</button></div>
-   </div>`;
-  $("#modal").classList.add("on");
-  const recalc = () => {
-    let p = 0, t = 0, all = true;
-    [1, 2, 3, 4].forEach((a) => {
-      const v = $("#ax" + a).value;
-      if (v === "") {
-        all = false;
-        $("#pt" + a).textContent = "—";
-        return;
+     <div class="tip">أدخل الأرقام الخام لكل مؤشر كما هي من أدوات القياس. نسبة التنفيذ تُحسب في الخادم
+       ولها حد أعلى 100%، والتقدير يظهر بعد استكمال المؤشرات الـ${K.kpis.length} كلها.</div>`;
+  if (tuned.length) {
+    h += `<div class="tip amber">مستهدفات مضبوطة من الحساب الفني في ${tuned.length} مؤشراً
+      (${tuned.join(" · ")}). المستهدف الأصلي من الخطة يظهر تحت كل خانة.</div>`;
+  }
+  if (assumed.length) {
+    h += `<div class="tip red">المؤشر ${
+      assumed.join(" · ")
+    } مستهدفه يتبع المرحلة الدراسية، ومرحلة هذه المؤسسة «${
+      esc(x.stage ?? "مرحلة غير مسجَّلة")
+    }» لا تحسمها الخطة. طُبِّق مستهدف الإعدادي والثانوي مؤقتاً ويحتاج قراراً من الفريق.</div>`;
+  }
+
+  [1, 2, 3, 4].forEach((a) => {
+    const rows = K.kpis.filter((k) => k.ax === a);
+    if (!rows.length) return;
+    h += `<div class="axbox"><div class="axhead" style="background:${AXC[a]}">
+      <span>${esc(META.axname[a])}</span><span class="axbadge" id="axb${a}">—</span></div>`;
+    rows.forEach((k) => {
+      h += `<div class="frow"><div class="ftop"><div class="fnum">${k.n}</div>
+        <div class="ftxt">${esc(k.kpi)}
+        <div style="font-weight:400;font-size:11px;color:var(--muted);margin-top:3px">
+          <span class="pill ${MODEP[k.mode]}">${k.mode}</span> &nbsp;${esc(k.mech)}</div></div></div>
+        <div class="finputs">`;
+      const g = (f) => {
+        const v = EV.raw[k.n]?.[f];
+        return v === undefined || v === null ? "" : esc(v);
+      };
+      if (k.mode === "وصفي") {
+        h += `<div class="fld"><label>حالة التنفيذ</label>
+          <select data-k="${k.n}" data-f="j"><option value="">—</option>` +
+          K.states.map((s) =>
+            `<option value="${s.v}" ${
+              String(g("j")) === String(s.v) ? "selected" : ""
+            }>${s.v} — ${s.name}</option>`
+          ).join("") + `</select></div>`;
+      } else {
+        if (k.denom) {
+          h += `<div class="fld"><label>${esc(k.denom)}</label>
+            <input type="number" min="0" step="any" data-k="${k.n}" data-f="i" value="${g("i")}"></div>`;
+        }
+        h += `<div class="fld"><label>${esc(k.numer)}</label>
+          <input type="number" min="0" step="any" data-k="${k.n}" data-f="j" value="${g("j")}"></div>`;
       }
-      const n = Math.max(0, Math.min(100, Number(v)));
-      p += x.axw[a] * n / 100;
-      t += x.axw[a];
-      $("#pt" + a).textContent = fmt(x.axw[a] * n / 100, 1);
+      if (k.secEff !== null) {
+        h += `<div class="fld"><label>${esc(k.secd || "القيمة الثانوية")}</label>
+          <input type="number" min="0" step="any" data-k="${k.n}" data-f="m" value="${g("m")}"></div>`;
+      }
+      h += `<div class="fld"><label>المستهدف</label>
+        <div class="tgt">${fmt(k.tgtEff, k.tgtEff % 1 ? 2 : 0)}${
+        k.secEff !== null ? " + " + fmt(k.secEff) : ""
+      }</div>
+        <div class="ogl">${
+        k.tgtEff !== k.tgtBase
+          ? `<b style="color:var(--amber)">مضبوط</b> · الأصل ${fmt(k.tgtBase)}`
+          : (k.assumed ? `<b style="color:var(--red)">مُفترض</b> · حسب المرحلة` : `من الخطة`)
+      }</div></div>
+        <div class="fres" id="r${k.n}"></div></div></div>`;
     });
-    if (all) {
-      const pc = Math.round(p / t * 1000) / 10;
-      let L = META.rubric[0];
-      META.rubric.forEach((b) => {
-        if (pc >= b.a) L = b;
-      });
-      $("#evPct").innerHTML = `<b>${pc}%</b>`;
-      $("#evLvl").innerHTML = `<span class="pill" style="background:${
-        lvlColor(L.n)
-      };color:#fff">${L.n}</span>`;
-    } else {
-      $("#evPct").textContent = "—";
-      $("#evLvl").textContent = "—";
-    }
-  };
-  document.querySelectorAll(".axin").forEach((i) => i.oninput = recalc);
-  recalc();
+    h += `</div>`;
+  });
+
+  h += `<h4 class="blk">النتيجة حسب المسطرة المعتمدة</h4>
+   <div id="evSum"></div>
+   <h4 class="blk">الأداء التراكمي والدورات السابقة</h4>
+   <div id="evHist"><div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div></div>
+   <label style="font-size:12px;font-weight:700;color:var(--muted);display:block;margin:14px 0 5px">ملاحظات المقيّم</label>
+   <textarea id="evNotes" rows="3">${esc(x.notes ?? "")}</textarea>
+   <div style="display:flex;gap:9px;margin-top:15px;flex-wrap:wrap;align-items:center">
+     <button class="btn" id="evSave">حفظ التقييم</button>
+     <button class="btn ghost" id="evCancel">إلغاء</button>
+     <span id="evProg" style="font-size:12px;color:var(--muted);font-weight:700"></span></div>
+   </div>`;
+  $("#modalBody").innerHTML = h;
+
+  $("#modalBody").querySelectorAll("[data-k]").forEach((el) => {
+    const ev = el.tagName === "SELECT" ? "onchange" : "oninput";
+    el[ev] = () => {
+      const n = el.dataset.k, f = el.dataset.f;
+      EV.raw[n] = EV.raw[n] || {};
+      if (el.value === "") delete EV.raw[n][f];
+      else EV.raw[n][f] = el.value;
+      if (!Object.keys(EV.raw[n]).length) delete EV.raw[n];
+      evCalc();
+    };
+  });
   $("#mClose").onclick = $("#evCancel").onclick = () => $("#modal").classList.remove("on");
-  $("#evSave").onclick = async () => {
-    const axes = {};
-    [1, 2, 3, 4].forEach((a) => axes[a] = $("#ax" + a).value === "" ? null : Number($("#ax" + a).value));
-    try {
-      const r = await api("/api/evaluation", {
-        method: "POST",
-        body: { instId: id, axes, notes: $("#evNotes").value },
-      });
-      $("#modal").classList.remove("on");
-      toast(`حُفظ التقييم — الحالة: ${r.status}`);
-      await render();
-    } catch (e) {
-      toast(e.message, true);
+  $("#evSave").onclick = evSave;
+  evCalc();
+  evHistory(id);
+}
+
+/** الدورات السابقة والأداء التراكمي — عرض فقط. */
+async function evHistory(id) {
+  const box = $("#evHist");
+  if (!box) return;
+  let d;
+  try {
+    d = await api("/api/history?inst=" + encodeURIComponent(id));
+  } catch (e) {
+    box.innerHTML = `<div class="tip red">${esc(e.message)}</div>`;
+    return;
+  }
+  const c = d.cumulative;
+  let h = `<div class="kpis">
+    <div class="kpi"><div class="lbl">دورات مكتملة على المنهجية الحالية</div><div class="val">${d.cycles.length}</div></div>
+    <div class="kpi ${c.complete ? "" : "amber"}"><div class="lbl">متوسط آخر ${c.n || "—"} دورة</div>
+      <div class="val">${c.avg === null ? "—" : c.avg + "%"}</div></div>
+    <div class="kpi"><div class="lbl">التقدير التراكمي</div><div class="val" style="font-size:17px">${
+    c.level ?? "—"
+  }</div></div>
+    <div class="kpi ${c.trend === null ? "" : c.trend >= 0 ? "" : "red"}">
+      <div class="lbl">الفرق عن الدورة الأسبق</div>
+      <div class="val">${c.trend === null ? "—" : (c.trend > 0 ? "+" : "") + c.trend}</div></div>
+  </div>`;
+  if (!c.complete) {
+    h += `<div class="tip amber">الحسم التراكمي يتطلب ثلاث دورات مكتملة على المنهجية الحالية،
+      والمتوفر ${c.n}. الرقم أعلاه مؤقت ولا يصلح للحسم.</div>`;
+  }
+  if (d.cycles.length) {
+    h += `<div class="tbl"><table><thead><tr><th style="width:110px">الدورة</th>
+      <th style="width:90px">النتيجة</th><th style="width:130px">التقدير</th>` +
+      [1, 2, 3, 4].map((a) => `<th style="background:${AXC[a]}">محور ${a}</th>`).join("") +
+      `</tr></thead><tbody>` +
+      d.cycles.map((x) =>
+        `<tr><td class="r">${esc(x.year)}</td><td><b>${x.pct}%</b></td>
+        <td style="color:${lvlColor(x.level)};font-weight:700">${x.level}</td>` +
+        [1, 2, 3, 4].map((a) => `<td>${x.axes[a] === null ? "—" : x.axes[a] + "%"}</td>`).join("") +
+        `</tr>`
+      ).join("") + `</tbody></table></div>`;
+  }
+  if (d.prev) {
+    h += `<div class="tip">نتيجة الدورة المرجعية <b>${esc(d.prev.year)}</b>:
+      ${d.prev.pct === null ? "—" : d.prev.pct + "%"} · ${esc(d.prev.verdict ?? "—")}.
+      حُسبت بالمعادلة اللوغاريتمية القديمة، فلا تُقارَن بنقاط الحساب الخطي ولا تدخل في المتوسط التراكمي.</div>`;
+  } else {
+    h += `<div class="tip">لا توجد نتيجة مرجعية لهذه المؤسسة في الملفات المركزية.</div>`;
+  }
+  box.innerHTML = h;
+}
+
+/** حساب محلي للعرض الفوري — الحساب المعتمد يبقى في الخادم ويُعاد بعد الحفظ. */
+function evRow(k, raw) {
+  const jv = raw?.j;
+  if (jv === undefined || jv === "") return null;
+  if (!k.tgtEff) return null;
+  let K;
+  if (k.mode === "نسبة" && k.denom) {
+    const iv = raw?.i;
+    if (iv === undefined || iv === "" || Number(iv) === 0) return null;
+    K = Number(jv) / Number(iv) * 100;
+  } else K = Number(jv);
+  if (!isFinite(K)) return null;
+  let P = Math.min(100, K / k.tgtEff * 100);
+  if (k.secEff !== null) {
+    const mv = raw?.m;
+    const s2 = (mv === undefined || mv === "" || !isFinite(Number(mv)))
+      ? 0
+      : Math.min(100, Number(mv) / k.secEff * 100);
+    P = (P + s2) / 2;
+  }
+  return Math.round(Math.max(0, P) * 10) / 10;
+}
+function evCalc() {
+  const K = EV.defs, axp = { 1: 0, 2: 0, 3: 0, 4: 0 }, axn = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  let pts = 0, filled = 0;
+  K.kpis.forEach((k) => {
+    const P = evRow(k, EV.raw[k.n]);
+    const box = $("#r" + k.n);
+    if (P === null) {
+      if (box) box.innerHTML = '<span class="chip">لم يُملأ</span>';
+      return;
     }
-  };
+    filled++;
+    axn[k.ax]++;
+    const p = k.w * P / 100;
+    pts += p;
+    axp[k.ax] += p;
+    let L = META.rubric[0];
+    META.rubric.forEach((b) => {
+      if (P >= b.a) L = b;
+    });
+    if (box) {
+      box.innerHTML = `<span class="chip">نسبة التنفيذ <b>${P.toFixed(1)}%</b></span>
+        <span class="chip lvl" style="background:${lvlColor(L.n)}">${L.n}</span>
+        <span class="chip">${(k.w * P / 100).toFixed(1)} من ${fmt(k.w, k.w % 1 ? 2 : 0)}</span>`;
+    }
+  });
+  [1, 2, 3, 4].forEach((a) => {
+    const tot = K.kpis.filter((k) => k.ax === a).length;
+    const b = $("#axb" + a);
+    if (b) b.textContent = `${axn[a]} من ${tot} مؤشراً · ${axp[a].toFixed(1)} نقطة`;
+  });
+  const complete = filled === K.kpis.length;
+  const pct = complete ? Math.round(pts / K.cap * 1000) / 10 : null;
+  $("#evProg").textContent = `المؤشرات المملوءة: ${filled} من ${K.kpis.length}` +
+    (complete ? " — مكتمل" : " — قيد التقييم");
+  let h = `<div class="tbl"><table><thead><tr><th style="min-width:170px">المحور</th>
+    <th style="width:120px">النقاط</th><th style="width:100px">نسبة التنفيذ</th>
+    <th style="width:130px">التقدير</th></tr></thead><tbody>`;
+  [1, 2, 3, 4].forEach((a) => {
+    const w = K.axw[a], p = axp[a] / w * 100;
+    const tot = K.kpis.filter((k) => k.ax === a).length;
+    const full = axn[a] === tot;
+    let L = META.rubric[0];
+    META.rubric.forEach((b) => {
+      if (p >= b.a) L = b;
+    });
+    h += `<tr><td class="r" style="border-right:4px solid ${AXC[a]}">${esc(META.axname[a])}</td>
+      <td>${axp[a].toFixed(1)} من ${fmt(w)}</td>
+      <td><b>${full ? p.toFixed(1) + "%" : "—"}</b></td>
+      <td style="color:${full ? lvlColor(L.n) : "var(--muted)"};font-weight:700">${
+      full ? L.n : "غير مكتمل"
+    }</td></tr>`;
+  });
+  let LT = META.rubric[0];
+  if (pct !== null) {
+    META.rubric.forEach((b) => {
+      if (pct >= b.a) LT = b;
+    });
+  }
+  h += `<tr style="background:var(--green-l);font-weight:800"><td class="r">نتيجة المؤسسة</td>
+    <td>${pts.toFixed(1)} من ${fmt(K.cap)}</td>
+    <td><b style="font-size:15px">${pct === null ? "—" : pct.toFixed(1) + "%"}</b></td>
+    <td style="color:${pct === null ? "var(--muted)" : lvlColor(LT.n)}">${
+    pct === null ? "بعد الاكتمال" : LT.n
+  }</td></tr></tbody></table></div>`;
+  $("#evSum").innerHTML = h;
+}
+async function evSave() {
+  try {
+    const r = await api("/api/evaluation", {
+      method: "POST",
+      body: { instId: EV.inst.id, kpi: EV.raw, notes: $("#evNotes").value },
+    });
+    $("#modal").classList.remove("on");
+    toast(`حُفظ التقييم — ${r.status} · ${r.filled} من ${r.total} مؤشراً`);
+    await render();
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 /* ── لوحة الفريق ── */
@@ -274,7 +468,7 @@ function rTeam() {
 /* ── الإحصاءات ── */
 function statTable(list, label, key) {
   const g = {};
-  list.forEach((x) => (g[x[key]] = g[x[key]] || []).push(x));
+  list.forEach((x) => (g[x[key] ?? "غير مسجَّل"] = g[x[key] ?? "غير مسجَّل"] || []).push(x));
   const head = `<thead><tr><th>${label}</th><th style="width:62px">العدد</th><th style="width:68px">مقيَّمة</th>
     <th style="width:72px">الإنجاز</th><th style="width:82px">المتوسط</th>` +
     META.rubric.map((b) => `<th style="background:${lvlColor(b.n)}">${b.n}</th>`).join("") + `</tr></thead>`;
@@ -332,7 +526,8 @@ function rStats() {
       }%)</span>`
     ).join("") + `</div></div>
   <h4 class="blk">حسب المرحلة</h4>${statTable(ROWS, "المرحلة", "stage")}
-  <h4 class="blk">حسب الجنس</h4>${statTable(ROWS, "الجنس", "gender")}`;
+  <h4 class="blk">حسب الجنس</h4>${statTable(ROWS, "الجنس", "gender")}
+  <h4 class="blk">حسب تصنيف الحجم</h4>${statTable(ROWS, "التصنيف", "size")}`;
   if (ME.role === "tech") h += `<h4 class="blk">حسب الفريق</h4>${statTable(ROWS, "الفريق", "team")}`;
   h += `<h4 class="blk">نسب التقدم على المحاور</h4><div class="tbl"><table>
     <thead><tr><th>المحور</th><th style="width:110px">متوسط نسبة التنفيذ</th><th>التوزيع</th></tr></thead><tbody>` +
@@ -366,7 +561,7 @@ function rTop() {
       t.rows.map((x, i) => {
         const on = t.picks.includes(x.id);
         return `<tr${on ? ' style="background:var(--purple-l)"' : ""}><td><b>${i + 1}</b></td>
-        <td class="r">${esc(x.name)}</td><td>${esc(x.stage)}</td><td><b>${x.pct}%</b></td>
+        <td class="r">${esc(x.name)}</td><td>${esc(x.stage ?? "—")}</td><td><b>${x.pct}%</b></td>
         <td><span class="pill" style="background:${lvlColor(x.level)};color:#fff">${x.level}</span></td>
         <td>${
           canPick
@@ -471,6 +666,7 @@ function dlCSV() {
     "المرحلة",
     "الجنس",
     "الطلبة",
+    "التصنيف",
     "المقيّم",
     "الحالة",
     "النتيجة",
@@ -481,9 +677,10 @@ function dlCSV() {
       x.id,
       x.name,
       x.team,
-      x.stage,
-      x.gender,
-      x.students,
+      x.stage ?? "",
+      x.gender ?? "",
+      x.students ?? "",
+      x.size ?? "",
       x.evaluator,
       x.status,
       x.pct ?? "",
@@ -503,8 +700,14 @@ function dlCSV() {
 
 /* ── الحساب الفني ── */
 async function rTech() {
-  const [ac, au] = await Promise.all([api("/api/accounts"), api("/api/audit")]);
+  const [ac, au, tg] = await Promise.all([
+    api("/api/accounts"),
+    api("/api/audit"),
+    api("/api/targets"),
+  ]);
+  TGT = tg;
   const A = ac.accounts;
+  ACCS = A;
   const P = [
     ["مؤسساتي وإدخال التقييم", "مؤسساته فقط", "—", "—"],
     ["لوحة الفريق", "—", "فريقه", "كل الفرق"],
@@ -536,24 +739,43 @@ async function rTech() {
       ).join("") + `</tr>`
     ).join("") + `</tbody></table></div>
   <h4 class="blk">الحسابات</h4>
-  <div class="tbl"><table><thead><tr><th style="width:78px">الرمز</th><th>الاسم</th>
-   <th style="width:160px">الدور</th><th style="width:110px">الفريق</th>
-   <th style="width:120px">كلمة المرور</th><th style="width:130px"></th></tr></thead><tbody>` +
+  <p class="sl">عدّل الاسم والمسمى والفريق ثم اضغط «حفظ» في السطر نفسه. تغيير الفريق لا ينقل المؤسسات
+    المسندة للحساب — الإسناد يُدار من الجدول التالي.</p>
+  <div class="tbl"><table><thead><tr><th style="width:70px">الرمز</th><th style="min-width:170px">الاسم</th>
+   <th style="min-width:170px">المسمى</th><th style="width:130px">الفريق</th>
+   <th style="width:100px">كلمة المرور</th><th style="width:160px"></th></tr></thead><tbody>` +
     A.map((a) =>
-      `<tr><td class="mono">${a.id}</td><td class="r">${esc(a.name)}</td>
-      <td><span class="pill" style="background:${
-        a.role === "eval" ? "var(--blue-l)" : a.role === "lead" ? "var(--green-l)" : "var(--purple-l)"
-      };color:${a.role === "eval" ? "#1c4f85" : a.role === "lead" ? "var(--green-d)" : "var(--purple)"}">${
-        esc(a.title)
-      }</span></td>
-      <td>${esc(a.team ?? "—")}</td>
+      `<tr><td class="mono">${a.id}</td>
+      <td class="r"><input data-ac="${a.id}" data-af="name" value="${esc(a.name)}" style="width:100%"></td>
+      <td><input data-ac="${a.id}" data-af="title" value="${esc(a.title)}" style="width:100%"></td>
+      <td>${
+        a.role === "tech" ? "—" : `<select data-ac="${a.id}" data-af="team">` +
+          META.teams.map((t) => `<option ${t === a.team ? "selected" : ""}>${esc(t)}</option>`).join("") +
+          `</select>`
+      }</td>
       <td>${
         a.mustChange
           ? '<span class="pill" style="background:var(--amber-l);color:#854F0B">ابتدائية</span>'
           : '<span class="pill" style="background:var(--green-l);color:var(--green-d)">مُغيَّرة</span>'
       }</td>
-      <td><button class="btn sm ghost" data-reset="${a.id}">إعادة تعيين</button></td></tr>`
+      <td style="white-space:nowrap"><button class="btn sm" data-acsave="${a.id}">حفظ</button>
+      <button class="btn sm ghost" data-reset="${a.id}">كلمة المرور</button></td></tr>`
     ).join("") + `</tbody></table></div>
+  <h4 class="blk">تعديل المؤشرات والمستهدفات</h4>
+  <p class="sl">ما يُحفظ هنا يسري على كل المؤسسات فوراً ويُعاد حساب التقييمات المحفوظة عليه.
+    الفراغ يعني الرجوع إلى نص الخطة ورقمها. المؤشرات الوصفية مستهدفها ثابت عند 100.
+    التعديل يبقى في قاعدة البيانات ولا يمسّ ملف الخطة.</p>
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <button class="btn ghost" id="tgSchool">التعليم النظامي</button>
+    <button class="btn ghost" id="tgKg">التعليم المبكر</button></div>
+  <div id="tgBox"></div>
+  <h4 class="blk">إسناد المؤسسات</h4>
+  <p class="sl">اختر الفريق لعرض مؤسساته، ثم غيّر الفريق أو المقيّم لأي مؤسسة.
+    نقل مؤسسة بين النظامي ورياض الأطفال يغيّر عدد المؤشرات والسقف، فيُحذف تقييمها وقصتها عند النقل.</p>
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap" id="asTabs">` +
+    META.teams.map((t) => `<button class="btn ghost" data-as="${esc(t)}">${esc(t)}</button>`).join("") +
+    `</div>
+  <div id="asBox"></div>
   <h4 class="blk">سجل التدقيق — آخر ${au.rows.length} حدثاً</h4>
   <div class="tbl"><table><thead><tr><th style="width:150px">الوقت</th><th style="width:90px">الحساب</th>
    <th style="width:170px">الإجراء</th><th>الهدف</th><th style="width:110px">تفصيل</th></tr></thead><tbody>` +
@@ -562,6 +784,180 @@ async function rTech() {
       <td class="mono">${esc(r.actor)}</td><td>${esc(r.action)}</td>
       <td class="r">${esc(r.target)}</td><td>${esc(r.detail ?? "")}</td></tr>`
     ).join("") + `</tbody></table></div>`;
+}
+
+/* ── ضبط المستهدفات — الحساب الفني ── */
+async function tgRender(stage) {
+  TGSTAGE = stage;
+  $("#tgSchool").className = "btn" + (stage === "school" ? "" : " ghost");
+  $("#tgKg").className = "btn" + (stage === "kg" ? "" : " ghost");
+  const box = $("#tgBox");
+  box.innerHTML = `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
+  if (!TGDEFS[stage]) {
+    const probe = ROWS.find((r) => (r.team === "رياض الأطفال") === (stage === "kg")) ||
+      (await api("/api/institutions")).rows.find((r) => (r.team === "رياض الأطفال") === (stage === "kg"));
+    if (!probe) {
+      box.innerHTML =
+        `<div class="tip red">لا توجد مؤسسة من هذه المرحلة ضمن نطاقك لقراءة تعريف المؤشرات.</div>`;
+      return;
+    }
+    TGDEFS[stage] = (await api("/api/kpis?inst=" + encodeURIComponent(probe.id))).kpis;
+  }
+  const ov = TGT[stage] || {};
+  const F = [
+    ["kpi", "نص المؤشر"],
+    ["crit", "معيار النجاح"],
+    ["tools", "أدوات القياس"],
+    ["mech", "آلية الحساب"],
+    ["denom", "المقام"],
+    ["numer", "البسط"],
+  ];
+  let h = "";
+  [1, 2, 3, 4].forEach((a) => {
+    const rows = TGDEFS[stage].filter((k) => k.ax === a);
+    if (!rows.length) return;
+    h += `<div class="axbox"><div class="axhead" style="background:${AXC[a]}">
+      <span>${esc(META.axname[a])}</span><span class="axbadge">${rows.length} مؤشراً</span></div>`;
+    rows.forEach((k) => {
+      const lock = k.mode === "وصفي", o = ov[k.n] || {};
+      const edited = F.some(([f]) => o[f]);
+      h += `<div class="frow"><div class="ftop"><div class="fnum">${k.n}</div>
+        <div class="ftxt">${esc(o.kpi || k.kpi)}
+        <div style="font-weight:400;font-size:11px;color:var(--muted);margin-top:3px">
+          <span class="pill ${MODEP[k.mode]}">${k.mode}</span>
+          ${edited ? '<span class="pill purple">نص معدَّل</span>' : ""}
+          &nbsp;وزنه ${fmt(k.w, k.w % 1 ? 2 : 0)} نقطة</div></div>
+        <button class="btn sm ghost" data-edit="${k.n}">تعديل النص</button></div>
+        <div class="finputs">
+          <div class="fld"><label>مستهدف الخطة</label>
+            <div class="tgt">${lock ? "100" : fmt(k.tgtBase, k.tgtBase % 1 ? 2 : 0)}</div></div>
+          <div class="fld"><label>المستهدف المضبوط</label>${
+        lock
+          ? '<div class="tgt">ثابت</div>'
+          : `<input type="number" min="0" step="any" style="width:110px" data-tg="${k.n}" data-tf="t" value="${
+            o.t ?? ""
+          }" placeholder="من الخطة">`
+      }</div>
+          ${
+        k.sec === null || k.sec === undefined ? "" : `<div class="fld"><label>الثانوي المضبوط</label>
+            <input type="number" min="0" step="any" style="width:110px" data-tg="${k.n}" data-tf="s"
+              value="${o.s ?? ""}" placeholder="${k.sec}"></div>`
+      }
+          ${
+        k.prop === null || k.prop === undefined ? "" : `<div class="fld"><label>مقترح المراجعة</label>
+            <button class="btn sm" style="background:#8E24AA" data-prop="${k.n}" data-pv="${k.prop}">
+              تطبيق ${k.prop}</button></div>`
+      }
+        </div>
+        <div class="kedit" id="ke${k.n}" hidden>` +
+        F.map(([f, lbl]) =>
+          (f === "denom" && !k.denom) ? "" : `<label class="kel">${lbl}</label>
+            <textarea rows="${f === "kpi" || f === "crit" || f === "tools" ? 3 : 2}"
+              data-tx="${k.n}" data-tf="${f}" placeholder="${esc(k[f] ?? "")}">${esc(o[f] ?? "")}</textarea>`
+        ).join("") +
+        `<div class="kel" style="color:var(--muted);font-weight:400">الفراغ يعني الإبقاء على نص الخطة.</div>
+        </div></div>`;
+    });
+    h += `</div>`;
+  });
+  h += `<div style="display:flex;gap:9px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn" id="tgSave">حفظ التعديلات</button>
+      <button class="btn ghost" id="tgClear">إعادة الكل إلى الخطة</button></div>`;
+  box.innerHTML = h;
+  box.querySelectorAll("[data-edit]").forEach((b) =>
+    b.onclick = () => {
+      const el = box.querySelector("#ke" + b.dataset.edit);
+      el.hidden = !el.hidden;
+      b.textContent = el.hidden ? "تعديل النص" : "إخفاء التعديل";
+    }
+  );
+  box.querySelectorAll("[data-prop]").forEach((b) =>
+    b.onclick = () => {
+      const inp = box.querySelector(`[data-tg="${b.dataset.prop}"][data-tf="t"]`);
+      if (inp) inp.value = b.dataset.pv;
+    }
+  );
+  $("#tgClear").onclick = () => {
+    box.querySelectorAll("[data-tg]").forEach((i) => i.value = "");
+    box.querySelectorAll("[data-tx]").forEach((i) => i.value = "");
+  };
+  $("#tgSave").onclick = async () => {
+    const targets = {};
+    const put = (n, f, v) => {
+      targets[n] = targets[n] || {};
+      targets[n][f] = v;
+    };
+    box.querySelectorAll("[data-tg]").forEach((i) => {
+      if (i.value !== "") put(i.dataset.tg, i.dataset.tf, Number(i.value));
+    });
+    box.querySelectorAll("[data-tx]").forEach((i) => {
+      if (i.value.trim() !== "") put(i.dataset.tx, i.dataset.tf, i.value.trim());
+    });
+    try {
+      const r = await api("/api/targets", { method: "POST", body: { stage: TGSTAGE, targets } });
+      TGT[TGSTAGE] = targets;
+      delete TGDEFS[TGSTAGE];
+      toast(`حُفظت التعديلات — ${r.count} مؤشراً · ${r.text} تعديل نصي`);
+      await tgRender(TGSTAGE);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
+/* ── إسناد المؤسسات — الحساب الفني ── */
+let ASTEAM = null, ACCS = [];
+async function asRender(team) {
+  ASTEAM = team;
+  document.querySelectorAll("#asTabs [data-as]").forEach((b) =>
+    b.className = "btn" + (b.dataset.as === team ? "" : " ghost")
+  );
+  const box = $("#asBox");
+  box.innerHTML = `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
+  const rows = (await api("/api/institutions")).rows.filter((r) => r.team === team);
+  const evalsOf = (t) => ACCS.filter((a) => a.role === "eval" && a.team === t);
+  let h = `<div class="tbl"><table><thead><tr><th style="width:70px">الرمز</th><th>المؤسسة</th>
+    <th style="width:120px">المرحلة</th><th style="width:150px">الفريق</th>
+    <th style="width:130px">المقيّم</th><th style="width:100px">الحالة</th>
+    <th style="width:80px"></th></tr></thead><tbody>`;
+  rows.forEach((x) => {
+    h += `<tr><td class="mono">${x.id}</td><td class="r">${esc(x.name)}</td>
+      <td>${esc(x.stage ?? "غير مسجَّل")}</td>
+      <td><select data-in="${x.id}" data-if="team">` +
+      META.teams.map((t) => `<option ${t === x.team ? "selected" : ""}>${esc(t)}</option>`).join("") +
+      `</select></td>
+      <td><select data-in="${x.id}" data-if="evaluator">` +
+      evalsOf(x.team).map((a) =>
+        `<option value="${a.id}" ${a.id === x.evaluator ? "selected" : ""}>${a.id}</option>`
+      )
+        .join("") +
+      `</select></td>
+      <td><span class="pill" style="background:${SC[x.status]}22;color:${
+        SC[x.status]
+      }">${x.status}</span></td>
+      <td><button class="btn sm" data-insave="${x.id}">حفظ</button></td></tr>`;
+  });
+  box.innerHTML = h + `</tbody></table></div>`;
+  box.querySelectorAll('[data-if="team"]').forEach((sel) =>
+    sel.onchange = () => {
+      const ev = box.querySelector(`[data-in="${sel.dataset.in}"][data-if="evaluator"]`);
+      ev.innerHTML = evalsOf(sel.value).map((a) => `<option value="${a.id}">${a.id}</option>`).join("");
+    }
+  );
+  box.querySelectorAll("[data-insave]").forEach((b) =>
+    b.onclick = async () => {
+      const id = b.dataset.insave;
+      const team2 = box.querySelector(`[data-in="${id}"][data-if="team"]`).value;
+      const evaluator = box.querySelector(`[data-in="${id}"][data-if="evaluator"]`).value;
+      try {
+        const r = await api("/api/assign", { method: "POST", body: { instId: id, team: team2, evaluator } });
+        toast(`أُسندت ${id}` + (r.evalCleared ? " — حُذف تقييمها لاختلاف المرحلة" : ""));
+        await asRender(ASTEAM);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+  );
 }
 
 /* ── تغيير كلمة المرور ── */
@@ -599,6 +995,33 @@ function openPw(force = false) {
 /* ── ربط الأحداث ── */
 function wire() {
   document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openEval(b.dataset.open));
+  if ($("#tgSchool")) {
+    $("#tgSchool").onclick = () => tgRender("school");
+    $("#tgKg").onclick = () => tgRender("kg");
+    tgRender(TGSTAGE);
+  }
+  if ($("#asTabs")) {
+    document.querySelectorAll("#asTabs [data-as]").forEach((b) => b.onclick = () => asRender(b.dataset.as));
+    asRender(ASTEAM ?? META.teams[0]);
+  }
+  document.querySelectorAll("[data-acsave]").forEach((b) =>
+    b.onclick = async () => {
+      const id = b.dataset.acsave,
+        g = (f) => {
+          const el = document.querySelector(`[data-ac="${id}"][data-af="${f}"]`);
+          return el ? el.value : undefined;
+        };
+      try {
+        await api("/api/account", {
+          method: "POST",
+          body: { id, name: g("name"), title: g("title"), team: g("team") },
+        });
+        toast(`حُفظ الحساب ${id}`);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+  );
   document.querySelectorAll("[data-story]").forEach((b) => b.onclick = () => openStory(b.dataset.story));
   document.querySelectorAll("[data-pick]").forEach((c) =>
     c.onchange = async () => {

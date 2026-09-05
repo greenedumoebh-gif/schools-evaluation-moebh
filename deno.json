@@ -12,7 +12,8 @@
   },
   "fmt": {
     "lineWidth": 110,
-    "semiColons": true
+    "semiColons": true,
+    "exclude": ["data", "README.md", "static/index.html"]
   },
   "lint": {
     "rules": {

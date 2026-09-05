@@ -8,26 +8,39 @@
   </head>
   <body>
     <div id="login">
-      <form class="lbox" id="loginForm" autocomplete="on">
-        <h1>منصة تقييم التعليم الأخضر</h1>
-        <p class="s">وزارة التربية والتعليم · إدارة المنشآت التعليمية · العام الدراسي 2025-2026</p>
-        <label for="uid">اسم الحساب</label>
-        <input id="uid" name="username" autocomplete="username" placeholder="مثال: Z1-1" required>
-        <label for="pwd">كلمة المرور</label>
-        <input id="pwd" name="password" type="password" autocomplete="current-password" required>
-        <button class="btn" type="submit" style="width:100%;margin-top:14px">تسجيل الدخول</button>
-        <div id="lerr" class="err"></div>
-        <p class="hint">
+      <div class="lwrap">
+        <form class="lbox" id="loginForm" autocomplete="on">
+          <div class="lockup lockup-lg">
+            <img src="/img/moe.png" alt="وزارة التربية والتعليم">
+            <span class="lk-div"></span>
+            <img src="/img/green.png" alt="مبادرة التعليم الأخضر">
+          </div>
+          <h1>منصة تقييم التعليم الأخضر</h1>
+          <p class="s">إدارة المنشآت التعليمية · العام الدراسي 2025-2026</p>
+          <label for="uid">اسم الحساب</label>
+          <input id="uid" name="username" autocomplete="username" placeholder="مثال: Z1-1" required>
+          <label for="pwd">كلمة المرور</label>
+          <input id="pwd" name="password" type="password" autocomplete="current-password" required>
+          <button class="btn" type="submit" style="width:100%;margin-top:14px">تسجيل الدخول</button>
+          <div id="lerr" class="err"></div>
+          <p class="hint">
       أعضاء فرق التقييم: <code>Z1-1</code> … <code>Z4-5</code> · <code>PR-1</code> · <code>KG-1</code><br>
       رؤساء الفرق: <code>Z1-L</code> … <code>KG-L</code> · الحساب الفني: <code>TECH</code>
     </p>
-      </form>
+        </form>
+        <p class="lfoot">مملكة البحرين · وزارة التربية والتعليم</p>
+      </div>
     </div>
 
     <div class="layout" id="app" hidden>
       <aside class="sidebar" id="sb">
         <div class="brand">
-          <h1>منصة تقييم<br>التعليم الأخضر</h1>
+          <div class="lockup lockup-sm">
+            <img src="/img/moe.png" alt="وزارة التربية والتعليم">
+            <span class="lk-div"></span>
+            <img src="/img/green.png" alt="مبادرة التعليم الأخضر">
+          </div>
+          <h1>منصة تقييم التعليم الأخضر</h1>
           <p id="brandSub">—</p>
         </div>
         <div class="who" id="who"></div>
@@ -40,6 +53,11 @@
             <h2 id="tt">—</h2>
             <div class="sub" id="ts">—</div>
           </div>
+        </div>
+        <div class="printhead">
+          <img src="/img/moe.png" alt="">
+          <div><b>منصة تقييم التعليم الأخضر</b><div>إدارة المنشآت التعليمية · 2025-2026</div></div>
+          <img src="/img/green.png" alt="">
         </div>
         <div class="content" id="content"></div>
       </div>
