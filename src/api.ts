@@ -152,6 +152,10 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         axname: META.axname,
         rubric: META.rubric,
         year: META.year,
+        appName: META.appName,
+        appNameShort: META.appNameShort,
+        version: META.version,
+        released: META.released,
         maxPicks: MAX_PICKS,
         topN: TOP_N,
         currentYear: await currentYear(),
@@ -211,7 +215,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       const c = central[i.id];
       const sc = scoreInst(i.team, i, e?.kpi ?? {}, ovOf(i.team), c);
       const students = c?.students ?? null;
-      const arch = yearIsArchive(year) ? i.prev : null;
+      const arch = yearIsArchive(year) && e?.archived ? e : null;
       if (arch) {
         // العام المؤرشف يُعرض بنتيجة الملفات المركزية ولا يُحسب بالمنهجية الخطية
         return {
@@ -222,16 +226,16 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
           teamCode: META.teamMeta[i.team]?.code ?? null,
           kpi: {},
           kpiPct: {},
-          axes: arch.ax,
-          axPts: arch.ax,
-          pts: arch.pts,
+          axes: arch.axes,
+          axPts: arch.axes,
+          pts: null,
           filled: 0,
           totalKpi: 0,
-          status: arch.verdict ? "مكتمل" : "لم يبدأ",
+          status: arch.status,
           notes: "",
-          pct: arch.pct,
-          level: arch.verdict,
-          basis: arch.basis,
+          pct: arch.pct ?? null,
+          level: arch.level ?? null,
+          basis: arch.basis ?? "لوغاريتمية",
           archived: true,
           cap: capOf(i.team),
           axw: axw(i.team),
@@ -418,8 +422,10 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     const out = [];
     for (const t of teams) {
       const rows = inst.filter((i) => i.team === t).map((i) => {
-        const axes = evals[i.id]?.axes ?? null;
-        return { ...i, axes, pct: pctOf(i.team, axes), status: evals[i.id]?.status ?? "لم يبدأ" };
+        const e = evals[i.id];
+        if (e?.archived) return { ...i, axes: null, pct: null, status: "لم يبدأ" };
+        const axes = e?.axes ?? null;
+        return { ...i, axes, pct: pctOf(i.team, axes), status: e?.status ?? "لم يبدأ" };
       }).filter((r) => r.status === "مكتمل" && r.pct !== null)
         .sort((a, b) => b.pct! - a.pct!).slice(0, TOP_N)
         .map((r) => ({ ...r, level: lvlOf(r.pct!).n }));
@@ -632,7 +638,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     const cycles = [];
     for (const y of years) {
       const ev = (await kv.get<Evaluation>(["eval", y, id])).value;
-      if (!ev || ev.status !== "مكتمل") continue;
+      if (!ev || ev.archived || ev.status !== "مكتمل") continue;
       const sc = scoreInst(i.team, i, ev.kpi, ov);
       if (sc.pct === null) continue;
       cycles.push({
@@ -645,14 +651,15 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         archived: false,
       });
     }
-    if (i.prev && (i.prev.pct !== null || i.prev.verdict)) {
+    const archEv = (await kv.get<Evaluation>(["eval", META.archiveYear, id])).value;
+    if (archEv?.archived) {
       cycles.push({
-        year: i.prev.year,
-        pct: i.prev.pct ?? 0,
-        pts: i.prev.pts ?? 0,
-        axes: i.prev.ax,
-        level: i.prev.verdict ?? "—",
-        basis: i.prev.basis,
+        year: archEv.year,
+        pct: archEv.pct ?? 0,
+        pts: i.prev?.pts ?? 0,
+        axes: archEv.axes,
+        level: archEv.level ?? "—",
+        basis: archEv.basis ?? "لوغاريتمية",
         archived: true,
       });
     }

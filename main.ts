@@ -1,6 +1,6 @@
-// منصة تقييم التعليم الأخضر — نقطة التشغيل
+// منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر — نقطة التشغيل
 import { handleApi } from "./src/api.ts";
-import { kvError, seedIfEmpty } from "./src/db.ts";
+import { kvError, META, seedIfEmpty } from "./src/db.ts";
 
 let bootError: string | null = kvError;
 if (!bootError) {
@@ -82,7 +82,12 @@ Deno.serve(async (req: Request) => {
 
   if (url.pathname === "/health") {
     return new Response(
-      JSON.stringify({ ok: !bootError, error: bootError, at: new Date().toISOString() }),
+      JSON.stringify({
+        ok: !bootError,
+        version: META.version,
+        error: bootError,
+        at: new Date().toISOString(),
+      }),
       { status: bootError ? 503 : 200, headers: { "content-type": "application/json; charset=utf-8" } },
     );
   }

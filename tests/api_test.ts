@@ -242,6 +242,37 @@ chk(tgBad.status === 400, "مستهدف صفري يُرفض (400)");
 await call(tech.sid, "/api/targets", "POST", { stage: "school", targets: {} });
 delete kpiCache[mine.id];
 
+console.log("\n■ اسم المنصة والإصدار ونتائج العام المؤرشف");
+const meta0 = (await (await call(tech.sid, "/api/me")).json()).meta;
+chk(
+  meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
+  `اسم المنصة: ${meta0.appName}`,
+);
+chk(/^\d+\.\d+\.\d+$/.test(meta0.version), `رقم الإصدار ${meta0.version}`);
+const health = await (await fetch(`${BASE}/health`)).json();
+chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
+const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;
+const archDone = archAll.filter((r: { status: string }) => r.status === "مكتمل");
+chk(
+  archAll.filter((r: { basis?: string }) => r.basis === "لوغاريتمية").length === 243,
+  `نتائج 2025-2026 مسجَّلة كتقييمات فعلية في المنصة (${
+    archAll.filter((r: { basis?: string }) => r.basis === "لوغاريتمية").length
+  } مؤسسة)`,
+);
+chk(
+  archDone.length === 242,
+  `المكتمل منها ${archDone.length} · وواحدة حكمها «قيد التقييم» في المصدر`,
+);
+chk(
+  archDone.every((r: { basis: string; pct: number | null }) => r.basis === "لوغاريتمية" && r.pct !== null),
+  "كل نتيجة مؤرشفة موسومة بمنهجيتها ولها نسبة",
+);
+const curAll = (await (await call(tech.sid, "/api/institutions")).json()).rows;
+chk(
+  curAll.every((r: { basis?: string }) => r.basis === undefined),
+  "العام الجاري لم يتلوّث بنتائج العام المؤرشف",
+);
+
 console.log("\n■ البيانات المركزية");
 chk(
   (await call(ev1.sid, "/api/central", "POST", { rows: [] })).status === 403,

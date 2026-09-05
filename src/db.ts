@@ -63,6 +63,12 @@ export interface PrevCycle {
 
 export interface Evaluation {
   instId: string;
+  /** دورة مؤرشفة: نتائجها من الملفات المركزية بمنهجية سابقة ولا تُحسب خطياً */
+  archived?: boolean;
+  /** النتيجة والتقدير المخزّنان مباشرةً في الدورات المؤرشفة فقط */
+  pct?: number | null;
+  level?: string | null;
+  basis?: string;
   /** العام الدراسي الذي يخص هذه الدورة */
   year: string;
   /** المدخلات الخام لكل مؤشر: المفتاح رقم المؤشر — i المقام · j البسط أو القيمة · m القيمة الثانوية */
@@ -104,6 +110,10 @@ export const META = seed as unknown as {
   centralFields: [string, string][];
   yearColors: Record<string, string>;
   yearColorFallback: string;
+  appName: string;
+  appNameShort: string;
+  version: string;
+  released: string;
   startYear: string;
   archiveYear: string;
 };
@@ -143,6 +153,7 @@ export async function seedIfEmpty() {
   if (!_kv) return { seeded: false, reset: false, error: _kvError };
   const done = await kv.get<boolean>(["seeded"]);
   await migrateEvalSchema();
+  await seedArchiveCycle();
 
   // إعادة ضبط كلمات المرور: غيّر قيمة SEED_RESET في متغيرات البيئة لتنفيذها مرة واحدة.
   // تفيد إذا شُغّلت المنصة قبل ضبط SEED_PASSWORD أو فُقدت كلمة مرور الحساب الفني.
@@ -187,9 +198,46 @@ export async function migrateEvalSchema() {
     await kv.delete(e.key);
     n++;
   }
+  await kv.delete(["archive_seeded"]);
   await kv.set(["eval_schema"], EVAL_SCHEMA);
   if (n) console.warn(`[ترقية] حُذف ${n} تقييماً تجريبياً بعد تغيير بنية التقييم إلى المؤشرات التفصيلية.`);
   return { migrated: true, deleted: n };
+}
+
+/**
+ * تسجيل نتائج العام المؤرشف كتقييمات فعلية في قاعدة البيانات، لا كحقل جانبي،
+ * حتى تعاملها كل الشاشات والتقارير معاملة أي دورة أخرى. تُكتب مرة واحدة.
+ */
+export async function seedArchiveCycle() {
+  const done = (await kv.get<boolean>(["archive_seeded"])).value;
+  if (done) return { seeded: false, count: 0 };
+  const y = META.archiveYear;
+  let n = 0;
+  for (const i of META.inst as unknown as Inst[]) {
+    const p = i.prev;
+    if (!p || (p.pct === null && !p.verdict)) continue;
+    const ev: Evaluation = {
+      instId: i.id,
+      year: y,
+      archived: true,
+      pct: p.pct,
+      level: p.verdict,
+      basis: p.basis,
+      kpi: {},
+      axes: p.ax,
+      filled: 0,
+      // «مكتمل» فقط إذا كان الحكم أحد مستويات المسطرة وله نسبة؛ وإلا فهو غير مكتمل
+      status: (p.pct !== null && META.rubric.some((r) => r.n === p.verdict)) ? "مكتمل" : "قيد التقييم",
+      notes: "",
+      by: "IMPORT",
+      at: new Date().toISOString(),
+    };
+    await kv.set(["eval", y, i.id], ev);
+    n++;
+  }
+  await kv.set(["archive_seeded"], true);
+  console.warn(`[استيراد] سُجّلت ${n} نتيجة للعام المؤرشف ${y} من الملفات المركزية.`);
+  return { seeded: true, count: n };
 }
 
 export async function getAccount(id: string): Promise<Account | null> {

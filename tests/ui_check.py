@@ -88,6 +88,35 @@ with sync_playwright() as p:
     broken = [l for l in logos if l["w"] == 0]
     chk(len(logos) >= 2, f"صور الشعار في الصفحة ({len(logos)})")
     chk(not broken, f"لا شعار مكسور ({[b['s'] for b in broken]})")
+    # اسم المنصة ورقم الإصدار
+    chk(
+        "منصة تقييم المؤسسات التعليمية" in pg.title(),
+        f"عنوان الصفحة بالاسم الجديد ({pg.title()[:48]})",
+    )
+    chk(
+        "منصة تقييم المؤسسات التعليمية" in pg.locator(".brand h1").inner_text(),
+        "اسم المنصة في الشريط الجانبي",
+    )
+    chk(
+        "الإصدار" in pg.locator("#brandVer").inner_text(),
+        f"رقم الإصدار ظاهر ({pg.locator('#brandVer').inner_text()})",
+    )
+
+    # شفافية الشعارين داخل المربع الأبيض — قياس بكسل الركن بعد الرسم
+    alpha = pg.evaluate(
+        """async()=>{const out=[];
+        for(const im of document.querySelectorAll('.lgbox img')){
+          const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;
+          const x=c.getContext('2d');x.drawImage(im,0,0);
+          const d=x.getImageData(0,0,1,1).data, e=x.getImageData(c.width-1,c.height-1,1,1).data;
+          out.push({src:im.getAttribute('src'),a1:d[3],a2:e[3]});}
+        return out}"""
+    )
+    chk(
+        alpha and all(a["a1"] == 0 and a["a2"] == 0 for a in alpha),
+        f"خلفية الشعارين شفافة فعلياً ({[(a['src'].split('/')[-1], a['a1']) for a in alpha]})",
+    )
+
     plat = pg.evaluate(
         "()=>[...document.querySelectorAll('.lgbox img')].map(i=>i.getAttribute('src'))"
     )
@@ -320,7 +349,20 @@ with sync_playwright() as p:
     chk(pg.locator("[data-open]").count() == 0, "لا زر تقييم في العام المؤرشف")
     chk(pg.locator("[data-move]").count() == 0, "لا زر نقل في العام المؤرشف")
     ev = pg.locator("#content tbody tr").first.inner_text()
-    chk("مكتمل" in ev and "مستدام" in ev, f"المؤسسة تظهر مقيَّمة بنتيجة الملف المركزي")
+    chk("مكتمل" in ev and "مستدام" in ev, "المؤسسة تظهر مقيَّمة بنتيجة الملف المركزي")
+    nrows = pg.locator("#content tbody tr").count()
+    ndone = pg.evaluate(
+        "()=>[...document.querySelectorAll('#content tbody tr')]"
+        ".filter(r=>r.innerText.includes('مكتمل')).length"
+    )
+    npend = pg.evaluate(
+        "()=>[...document.querySelectorAll('#content tbody tr')]"
+        ".filter(r=>r.innerText.includes('قيد التقييم')).length"
+    )
+    chk(
+        ndone + npend == nrows and npend <= 1,
+        f"مؤسسات المقيّم مسجَّلة في العام المؤرشف: {ndone} مكتملة و{npend} قيد التقييم من {nrows}",
+    )
 
     # ── العام القادم: عرض فقط ──
     pg.locator('.ytab[data-y="2027-2028"]').click()

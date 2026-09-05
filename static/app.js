@@ -1,4 +1,4 @@
-// واجهة منصة تقييم التعليم الأخضر
+// واجهة منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين
 const $ = (s) => document.querySelector(s);
 const AXC = { 1: "#1E7145", 2: "#2C6FB5", 3: "#BA7517", 4: "#0F6E56" };
 const SC = { "مكتمل": "#1E7145", "قيد التقييم": "#BA7517", "لم يبدأ": "#C0392B" };
@@ -50,6 +50,11 @@ async function api(path, opts = {}) {
 }
 
 /* ── الدخول ── */
+fetch("/health").then((r) => r.json()).then((j) => {
+  const el = $("#lver");
+  if (el && j.version) el.textContent = `الإصدار ${j.version}`;
+}).catch(() => {});
+
 $("#loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("#lerr").textContent = "";
@@ -80,6 +85,8 @@ async function boot() {
   $("#brandSub").textContent = tm
     ? `${tm.label} · رمز الفريق ${tm.code} · رقم ${tm.no}`
     : `${META.teams.length} فرق تقييم`;
+  $("#brandVer").textContent = `الإصدار ${META.version} · ${META.released}`;
+  $("#phSub").textContent = `إدارة المنشآت التعليمية · الإصدار ${META.version} · ${VYEAR}`;
   buildYearTabs();
   $("#who").innerHTML = `<div class="n">${esc(ME.name)}</div><div class="r">${esc(ME.title)}${
     ME.team ? " · " + esc(ME.team) : ""

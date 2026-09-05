@@ -969,3 +969,11 @@ h3.st::before {
 .chartcard.wide .chartbox {
   height: 300px;
 }
+
+/* ── رقم الإصدار ── */
+#brandVer {
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: 2px;
+  letter-spacing: 0.2px;
+}
