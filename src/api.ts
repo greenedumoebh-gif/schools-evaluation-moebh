@@ -2,11 +2,14 @@
 import {
   type Account,
   audit,
+  type CentralData,
   currentYear,
   delStory,
   type Evaluation,
+  getCentral,
   getEvals,
   getPicks,
+  getTransfer,
   hashPw,
   type Inst,
   kv,
@@ -14,14 +17,19 @@ import {
   listAudit,
   listInst,
   listStories,
+  listTransfers,
   listYears,
   META,
   newSalt,
+  setCentral,
   setCurrentYear,
   setEval,
   setPicks,
   setStory,
+  setTransfer,
+  sizeOf,
   type Story,
+  type Transfer,
 } from "./db.ts";
 import {
   applyText,
@@ -58,6 +66,14 @@ const J = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
   });
 
 export const MAX_PICKS = 3;
+/** نافذة الأعوام المعروضة: سنتان سابقتان · الحالية · القادمة. */
+export function yearWindow(cur: string): string[] {
+  const a = Number(cur.slice(0, 4));
+  return [a - 2, a - 1, a, a + 1].map((y) => `${y}-${y + 1}`);
+}
+export function yearIsEditable(y: string, cur: string): boolean {
+  return y === cur;
+}
 export const TOP_N = 10;
 
 export function axw(team: string) {
@@ -130,12 +146,17 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         topN: TOP_N,
         currentYear: await currentYear(),
         years: await listYears(),
+        yearWindow: yearWindow(await currentYear()),
+        teamMeta: META.teamMeta,
+        sizeRule: META.sizeRule,
+        centralFields: META.centralFields,
+        denomMap: META.denomMap,
       },
       // ترتيب الشاشات: تبدأ بالشاشة الأساسية لكل دور
       perms: ({
-        eval: ["mine", "stats"],
-        lead: ["team", "stats", "top", "reports"],
-        tech: ["tech", "team", "stats", "top", "reports"],
+        eval: ["mine", "stats", "transfers"],
+        lead: ["team", "stats", "top", "transfers", "reports"],
+        tech: ["tech", "team", "stats", "top", "transfers", "reports"],
       }[acc.role] as string[]).filter((x) => can(acc, x)),
     });
   }
@@ -169,11 +190,20 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       getTargets("kg"),
     ]);
     const ovOf = (team: string) => (stageOf(team) === "kg" ? tKg : tSchool);
+    const central = await getCentral(year);
+    const cur = await currentYear();
     const rows = inst.filter((i) => inScope(i.team, i.evaluator)).map((i) => {
       const e = evals[i.id];
-      const sc = scoreInst(i.team, i, e?.kpi ?? {}, ovOf(i.team));
+      const c = central[i.id];
+      const sc = scoreInst(i.team, i, e?.kpi ?? {}, ovOf(i.team), c);
+      const students = c?.students ?? null;
       return {
         ...i,
+        central: c ?? { students: null, teachers: null, subjects: null },
+        students: students ?? i.students,
+        size: students === null ? i.size : sizeOf(i.team, students),
+        teamNo: META.teamMeta[i.team]?.no ?? null,
+        teamCode: META.teamMeta[i.team]?.code ?? null,
         kpi: e?.kpi ?? {},
         kpiPct: sc.kpiPct,
         axes: sc.axes,
@@ -189,7 +219,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         axw: axw(i.team),
       };
     });
-    return J({ year, rows });
+    return J({ year, editable: yearIsEditable(year, cur), currentYear: cur, rows });
   }
 
   // ── تعريف المؤشرات والمستهدفات السارية لمؤسسة بعينها ──
@@ -204,6 +234,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     if (!inScope(i.team, i.evaluator)) return forbid("هذه المؤسسة خارج نطاقك");
     const st = stageOf(i.team);
     const ov = await getTargets(st);
+    const c = (await getCentral(await currentYear()))[id];
     const rows = (kpisOf(i.team) as Kpi[]).map((k) => ({
       ...applyText(k, ov),
       edited: TEXT_FIELDS.some((f) => {
@@ -214,6 +245,10 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       tgtBase: k.mode === "وصفي" ? 100 : effTarget(k, i.team, i, {}),
       secEff: effSecTarget(k, ov),
       assumed: targetIsAssumed(k, i.team, i),
+      centralField: k.denom ? META.denomMap[k.denom] ?? null : null,
+      centralValue: k.denom && META.denomMap[k.denom]
+        ? ((c ?? {}) as unknown as Record<string, number | null>)[META.denomMap[k.denom]] ?? null
+        : null,
     }));
     return J({
       stage: st,
@@ -221,6 +256,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       axw: axw(i.team),
       states: META.states,
       topStage: topStage(i),
+      central: c ?? { students: null, teachers: null, subjects: null },
       kpis: rows,
     });
   }
@@ -279,6 +315,9 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       ])).value;
     if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
     if (inst.evaluator !== acc.id) return forbid("هذه المؤسسة ليست ضمن مؤسساتك");
+    if (body.year !== undefined && String(body.year) !== await currentYear()) {
+      return forbid("الإدخال متاح في العام الجاري فقط");
+    }
     const ks = kpisOf(inst.team) as Kpi[];
     const kpi: Record<string, { i?: string; j?: string; m?: string }> = {};
     for (const k of ks) {
@@ -298,10 +337,11 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       if (Object.keys(cell).length) kpi[String(k.n)] = cell;
     }
     const ov = await getTargets(stageOf(inst.team));
-    const sc = scoreInst(inst.team, inst, kpi, ov);
+    const yr = await currentYear();
+    const sc = scoreInst(inst.team, inst, kpi, ov, (await getCentral(yr))[body.instId]);
     const ev: Evaluation = {
       instId: body.instId,
-      year: await currentYear(),
+      year: yr,
       kpi,
       axes: sc.axes,
       filled: sc.filled,
@@ -425,6 +465,114 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     });
     await audit(acc.id, "إعادة تعيين كلمة مرور", String(id));
     return J({ ok: true });
+  }
+
+  // ── البيانات المركزية للمؤسسة: الطلبة والمعلمون والمواد ──
+  if (p === "/api/central" && req.method === "GET") {
+    const year = url.searchParams.get("year") || await currentYear();
+    const [inst, central] = await Promise.all([listInst(), getCentral(year)]);
+    const rows = inst.filter((i) => inScope(i.team, i.evaluator)).map((i) => {
+      const c = central[i.id] ?? { students: null, teachers: null, subjects: null };
+      return {
+        id: i.id,
+        name: i.name,
+        team: i.team,
+        teamNo: META.teamMeta[i.team]?.no ?? null,
+        stage: i.stage,
+        ...c,
+        size: sizeOf(i.team, c.students),
+        sizeSource: i.size,
+        prevStudents: i.students,
+      };
+    });
+    return J({ year, editable: yearIsEditable(year, await currentYear()), rows });
+  }
+  if (p === "/api/central" && req.method === "POST") {
+    if (!can(acc, "accounts:write")) return forbid("إدخال البيانات المركزية من صلاحية الحساب الفني");
+    const body = await req.json().catch(() => ({}));
+    const year = String(body.year || await currentYear());
+    const items = Array.isArray(body.rows) ? body.rows : [];
+    let n = 0;
+    for (const r of items) {
+      const inst = (await kv.get<Inst>(["inst", String(r.id)])).value;
+      if (!inst) return J({ error: `المؤسسة ${r.id} غير موجودة` }, 404);
+      const c: CentralData = { students: null, teachers: null, subjects: null };
+      for (const f of ["students", "teachers", "subjects"] as const) {
+        const v = r[f];
+        if (v === undefined || v === null || String(v).trim() === "") continue;
+        const num = Number(v);
+        if (!Number.isFinite(num) || num < 0 || !Number.isInteger(num)) {
+          return J({ error: `قيمة غير صالحة في ${r.id}` }, 400);
+        }
+        c[f] = num;
+      }
+      await setCentral(year, String(r.id), c);
+      n++;
+    }
+    await audit(acc.id, "تحديث البيانات المركزية", year, `${n} مؤسسة`);
+    return J({ ok: true, count: n });
+  }
+
+  // ── طلبات نقل المؤسسات بين المقيّمين داخل الفريق ──
+  if (p === "/api/transfers" && req.method === "GET") {
+    const all = await listTransfers();
+    const rows = acc.role === "tech"
+      ? all
+      : acc.role === "lead"
+      ? all.filter((t) => t.team === acc.team)
+      : all.filter((t) => t.by === acc.id || t.fromEval === acc.id || t.toEval === acc.id);
+    return J({ rows });
+  }
+  if (p === "/api/transfers" && req.method === "POST") {
+    const { instId, toEval, reason } = await req.json().catch(() => ({}));
+    if (!instId || typeof instId !== "string") return J({ error: "المؤسسة غير محددة" }, 400);
+    const inst = (await kv.get<Inst>(["inst", instId])).value;
+    if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
+    if (!inScope(inst.team, inst.evaluator)) return forbid("هذه المؤسسة خارج نطاقك");
+    const to = (await kv.get<Account>(["account", String(toEval)])).value;
+    if (!to || to.role !== "eval") return J({ error: "المقيّم المطلوب غير موجود" }, 400);
+    if (to.team !== inst.team) {
+      return J({ error: "النقل متاح داخل الفريق نفسه فقط" }, 400);
+    }
+    if (to.id === inst.evaluator) return J({ error: "المؤسسة مسندة إليه أصلاً" }, 400);
+    const open = (await listTransfers()).find((t) => t.instId === instId && t.status === "معلّق");
+    if (open) return J({ error: "يوجد طلب معلّق لهذه المؤسسة" }, 400);
+    const t: Transfer = {
+      id: crypto.randomUUID(),
+      instId,
+      instName: inst.name,
+      team: inst.team,
+      fromEval: inst.evaluator,
+      toEval: to.id,
+      reason: String(reason ?? "").slice(0, 500),
+      by: acc.id,
+      at: new Date().toISOString(),
+      status: "معلّق",
+    };
+    await setTransfer(t);
+    await audit(acc.id, "طلب نقل مؤسسة", instId, `${t.fromEval} ← ${t.toEval}`);
+    return J({ ok: true, id: t.id });
+  }
+  if (p === "/api/transfer-decide" && req.method === "POST") {
+    const { id, approve, note } = await req.json().catch(() => ({}));
+    const t = await getTransfer(String(id ?? ""));
+    if (!t) return J({ error: "الطلب غير موجود" }, 404);
+    // القرار لرئيس الفريق صاحب الفريق أو للحساب الفني
+    const allowed = acc.role === "tech" || (acc.role === "lead" && acc.team === t.team);
+    if (!allowed) return forbid("البتّ في طلبات النقل من صلاحية رئيس الفريق أو الحساب الفني");
+    if (t.status !== "معلّق") return J({ error: "الطلب مبتوت فيه سابقاً" }, 400);
+    t.status = approve ? "معتمد" : "مرفوض";
+    t.decidedBy = acc.id;
+    t.decidedAt = new Date().toISOString();
+    t.note = String(note ?? "").slice(0, 500);
+    if (approve) {
+      const inst = (await kv.get<Inst>(["inst", t.instId])).value;
+      if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
+      await kv.set(["inst", t.instId], { ...inst, evaluator: t.toEval });
+    }
+    await setTransfer(t);
+    await audit(acc.id, approve ? "اعتماد نقل" : "رفض نقل", t.instId, `${t.fromEval} ← ${t.toEval}`);
+    return J({ ok: true, status: t.status });
   }
 
   // ── سجل المؤسسة عبر الدورات والأداء التراكمي ──

@@ -7,7 +7,7 @@ BASE = os.environ.get("BASE", "http://127.0.0.1:8000")
 PW = os.environ.get("SEED_PASSWORD", "TestPass12345")
 CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
 ok = True
-errs = []
+errs: list = []
 
 
 def chk(c, m):
@@ -28,8 +28,45 @@ def login(page, uid):
     page.evaluate("()=>document.getElementById('modal').classList.remove('on')")
 
 
+def fill_central(page, team, students=800, teachers=40, subjects=10):
+    """تعبئة البيانات المركزية لفريق كامل من شاشة الحساب الفني."""
+    page.locator(f'#cdTabs [data-cd="{team}"]').click()
+    page.wait_for_selector("#cdBox table", timeout=20000)
+    page.evaluate(
+        "([s,t,u])=>{document.querySelectorAll('#cdBox [data-cdf=students]').forEach(e=>{"
+        "e.value=s;e.dispatchEvent(new Event('input'))});"
+        "document.querySelectorAll('#cdBox [data-cdf=teachers]').forEach(e=>e.value=t);"
+        "document.querySelectorAll('#cdBox [data-cdf=subjects]').forEach(e=>e.value=u);}",
+        [str(students), str(teachers), str(subjects)],
+    )
+    page.click("#cdSave")
+    page.wait_for_selector(".toast", timeout=15000)
+    page.wait_for_timeout(800)
+
+
 with sync_playwright() as p:
     br = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
+
+    # ── الحساب الفني أولاً: البيانات المركزية شرط لحساب سبعة مؤشرات ──
+    pg2 = br.new_page(viewport={"width": 1440, "height": 950})
+    errs = []
+    pg2.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
+    pg2.on("pageerror", lambda e: errs.append(str(e)))
+    login(pg2, "TECH")
+    pg2.wait_for_selector("#cdBox table", timeout=20000)
+    chk(pg2.locator("#cdBox tbody tr").count() == 56, f"البيانات المركزية منطقة 1: {pg2.locator('#cdBox tbody tr').count()}")
+    chk(pg2.locator('#cdBox [data-cdf="teachers"]').count() == 56, "خانة عدد المعلمين لكل مؤسسة")
+    st = pg2.locator('#cdBox [data-cdf="students"]').first
+    st.fill("1200")
+    pg2.wait_for_timeout(300)
+    chk("الكبيرة جداً" in pg2.locator("#cdBox tbody tr").first.inner_text(), "التصنيف يتغيّر فوراً مع عدد الطلبة")
+    st.fill("300")
+    pg2.wait_for_timeout(300)
+    chk("الصغيرة" in pg2.locator("#cdBox tbody tr").first.inner_text(), "التصنيف يتبع الحدود المعتمدة")
+    for tname in ["منطقة 1", "منطقة 4", "رياض الأطفال"]:
+        fill_central(pg2, tname)
+    chk(True, "عُبِّئت البيانات المركزية لثلاثة فرق")
+
     pg = br.new_page(viewport={"width": 1440, "height": 950})
     pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
     pg.on("pageerror", lambda e: errs.append(str(e)))
@@ -44,16 +81,34 @@ with sync_playwright() as p:
     chk("المدرسة " in row1, f"تصنيف الحجم معروض في الصف الأول")
     chk(pg.evaluate("getComputedStyle(document.documentElement).direction") == "rtl", "اتجاه الصفحة RTL")
 
+    # الشعارات
+    logos = pg.evaluate(
+        "()=>[...document.querySelectorAll('img')].map(i=>({s:i.getAttribute('src'),w:i.naturalWidth}))"
+    )
+    broken = [l for l in logos if l["w"] == 0]
+    chk(len(logos) >= 2, f"صور الشعار في الصفحة ({len(logos)})")
+    chk(not broken, f"لا شعار مكسور ({[b['s'] for b in broken]})")
+
+    # تبويبات الأعوام
+    tabs = pg.locator(".ytab").all_inner_texts()
+    chk(len(tabs) == 4, f"أربعة تبويبات أعوام ({len(tabs)})")
+    chk(pg.locator(".ytab.on").count() == 1, "تبويب واحد مفعّل")
+    chk("الجاري" in " ".join(tabs), "وسم العام الجاري ظاهر")
+    chk("الإدخال متاح" in pg.locator("#ynote").inner_text(), "شريط الحالة يوضح إتاحة الإدخال")
+    chk("Z1" in pg.locator("#brandSub").inner_text(), f"رمز الفريق في الشريط الجانبي")
+    chk("رقم 1" in pg.locator("#brandSub").inner_text(), "رقم المنطقة في الشريط الجانبي")
+
     pg.locator("[data-open]").first.click()
     pg.wait_for_selector(".axbox", timeout=15000)
     chk(pg.locator(".axbox").count() == 4, f"أربعة صناديق محاور ({pg.locator('.axbox').count()})")
     chk(pg.locator(".frow").count() == 31, f"31 صف مؤشر ({pg.locator('.frow').count()})")
-    chk(pg.locator(".fld .tgt").count() == 31, f"خانة مستهدف لكل مؤشر ({pg.locator('.fld .tgt').count()})")
+    chk(pg.locator(".fld .tgt").count() == 38, f"31 خانة مستهدف + 7 مقامات مركزية ({pg.locator('.fld .tgt').count()})")
+    chk("مركزي" in pg.locator("#modalBody").inner_text(), "المقام المركزي معلَّم في الشاشة")
     chk(pg.locator("select[data-f=j]").count() == 6, f"6 قوائم حالة تنفيذ للمؤشرات الوصفية ({pg.locator('select[data-f=j]').count()})")
     chk(pg.locator("input[data-f=m]").count() == 2, f"خانتان ثانويتان ({pg.locator('input[data-f=m]').count()})")
     chk(
-        pg.locator(".tip.red").count() == 0,
-        "مؤسسة ابتدائية: لا تنبيه مستهدف مُفترض (المؤشر 20 = 4)",
+        "مُفترض" not in pg.locator("#modalBody").inner_text(),
+        "مؤسسة ابتدائية: لا مستهدف مُفترض (المؤشر 20 = 4)",
     )
     t20 = pg.locator(".frow").nth(19).locator(".tgt").inner_text()
     chk(t20 == "4", f"المؤشر 20 لمدرسة ابتدائية مستهدفه 4 ({t20})")
@@ -89,6 +144,8 @@ with sync_playwright() as p:
     chk("لا تُقارَن" in pg.locator("#evHist").inner_text(), "تنبيه اختلاف المنهجية ظاهر")
     chk(pg.locator("#evHist .tip.amber").count() == 1, "تنبيه نقص الدورات الثلاث ظاهر")
 
+    chk(pg.locator("[data-move]").count() > 0, "زر طلب النقل متاح للمقيّم")
+
     pg.click("#evSave")
     pg.wait_for_selector(".toast", timeout=10000)
     toast = pg.locator(".toast").first.inner_text()
@@ -110,7 +167,7 @@ with sync_playwright() as p:
     login(pg3, "Z1-2")
     pg3.locator('[data-open="Z1-007"]').click()
     pg3.wait_for_selector(".axbox", timeout=15000)
-    chk(pg3.locator(".tip.red").count() == 0, "مدرسة ابتدائي - إعدادي: لا تنبيه بعد قاعدة المرحلة العليا")
+    chk("مُفترض" not in pg3.locator("#modalBody").inner_text(), "مدرسة ابتدائي - إعدادي: لا مستهدف مُفترض")
     t20b = pg3.locator(".frow").nth(19).locator(".tgt").inner_text()
     chk(t20b == "8", f"المؤشر 20 لمدرسة ابتدائي - إعدادي = 8 حسب المرحلة العليا ({t20b})")
     chk("ابتدائي - إعدادي" in pg3.locator(".mhead").inner_text(), "المرحلة المركّبة معروضة حرفياً في ترويسة المودال")
@@ -126,7 +183,7 @@ with sync_playwright() as p:
     chk(pg4.locator(".frow").count() == 25, f"روضة: 25 صف مؤشر ({pg4.locator('.frow').count()})")
     chk(pg4.locator("select[data-f=j]").count() == 2, f"روضة: مؤشران وصفيان ({pg4.locator('select[data-f=j]').count()})")
     chk(pg4.locator("input[data-f=m]").count() == 0, "روضة: لا قيم ثانوية")
-    chk(pg4.locator(".tip.red").count() == 0, "روضة: لا تنبيه مستهدف مُفترض")
+    chk("مُفترض" not in pg4.locator("#modalBody").inner_text(), "روضة: لا مستهدف مُفترض")
 
     # ── المعهد الديني الجعفري: قرار الفريق ثانوي ──
     pg5 = br.new_page(viewport={"width": 1440, "height": 950})
@@ -135,7 +192,7 @@ with sync_playwright() as p:
     login(pg5, "Z4-5")
     pg5.locator('[data-open="Z4-024"]').click()
     pg5.wait_for_selector(".axbox", timeout=15000)
-    chk(pg5.locator(".tip.red").count() == 0, "الجعفري: لا تنبيه مستهدف مُفترض بعد قرار الفريق")
+    chk("مُفترض" not in pg5.locator("#modalBody").inner_text(), "الجعفري: لا مستهدف مُفترض بعد قرار الفريق")
     t20c = pg5.locator(".frow").nth(19).locator(".tgt").inner_text()
     chk(t20c == "8", f"المؤشر 20 للجعفري = 8 ({t20c})")
     head = pg5.locator(".mhead").inner_text()
@@ -144,11 +201,7 @@ with sync_playwright() as p:
     chk("رياض أطفال" in kgrow, "روضة: المرحلة «رياض أطفال» لا «غير مسجَّل»")
     chk("4,500" in pg4.locator("#evSum").inner_text(), "روضة: السقف 4,500 في جدول النتيجة")
 
-    # ── الحساب الفني: ضبط المستهدفات ──
-    pg2 = br.new_page(viewport={"width": 1440, "height": 950})
-    pg2.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
-    pg2.on("pageerror", lambda e: errs.append(str(e)))
-    login(pg2, "TECH")
+    # ── الحساب الفني: محرّر المؤشرات ──
     pg2.wait_for_selector("#tgBox .frow", timeout=20000)
     chk(pg2.locator("#tgBox .frow").count() == 31, f"محرّر مؤشرات النظامي 31 مؤشراً ({pg2.locator('#tgBox .frow').count()})")
     chk(pg2.locator("#tgBox [data-prop]").count() == 6, f"ستة أزرار مقترح ({pg2.locator('#tgBox [data-prop]').count()})")
@@ -173,6 +226,19 @@ with sync_playwright() as p:
     pg2.locator('#asTabs [data-as="رياض الأطفال"]').click()
     pg2.wait_for_timeout(3000)
     chk(pg2.locator("#asBox tbody tr").count() == 152, f"إسناد رياض الأطفال: {pg2.locator('#asBox tbody tr').count()} مؤسسة")
+
+    # ── العام الماضي: عرض فقط ──
+    pg.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    pg.locator('.ytab[data-y="2024-2025"]').click()
+    pg.wait_for_timeout(2500)
+    chk("عرض فقط" in pg.locator("#ynote").inner_text(), "العام السابق: عرض فقط")
+    chk(pg.locator("[data-move]").count() == 0, "لا زر نقل في عام غير جارٍ")
+    pg.locator("[data-open]").first.click()
+    pg.wait_for_selector(".axbox", timeout=15000)
+    chk(pg.locator("#evSave").count() == 0, "لا زر حفظ في عام غير جارٍ")
+    dis = pg.evaluate("()=>[...document.querySelectorAll('#modalBody [data-k]')].every(e=>e.disabled)")
+    chk(dis, "خانات الإدخال معطَّلة في عام غير جارٍ")
+    pg.click("#mClose")
 
     body = pg.locator("body").inner_text() + pg2.locator("body").inner_text() + pg3.locator("body").inner_text() + pg4.locator("body").inner_text() + pg5.locator("body").inner_text()
     chk("undefined" not in body and "NaN" not in body, "لا يوجد undefined/NaN في الصفحات")

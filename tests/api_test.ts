@@ -242,6 +242,93 @@ chk(tgBad.status === 400, "مستهدف صفري يُرفض (400)");
 await call(tech.sid, "/api/targets", "POST", { stage: "school", targets: {} });
 delete kpiCache[mine.id];
 
+console.log("\n■ البيانات المركزية");
+chk(
+  (await call(ev1.sid, "/api/central", "POST", { rows: [] })).status === 403,
+  "المقيّم لا يدخل البيانات المركزية (403)",
+);
+const cdSave = await (await call(tech.sid, "/api/central", "POST", {
+  rows: [{ id: mine.id, students: 850, teachers: 40, subjects: 10 }],
+})).json();
+chk(cdSave.ok && cdSave.count === 1, "الحساب الفني يحفظ بيانات مؤسسة");
+chk(
+  (await call(tech.sid, "/api/central", "POST", { rows: [{ id: mine.id, students: -3 }] })).status === 400,
+  "قيمة سالبة تُرفض (400)",
+);
+chk(
+  (await call(tech.sid, "/api/central", "POST", { rows: [{ id: mine.id, students: 12.5 }] })).status === 400,
+  "قيمة كسرية تُرفض (400)",
+);
+await call(tech.sid, "/api/central", "POST", {
+  rows: [{ id: mine.id, students: 850, teachers: 40, subjects: 10 }],
+});
+const cdRow = (await (await call(ev1.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === mine.id);
+chk(cdRow.students === 850, `عدد الطلبة من البيانات المركزية (${cdRow.students})`);
+chk(cdRow.size === "المدرسة الكبيرة", `التصنيف مشتق من العدد (${cdRow.size})`);
+chk(cdRow.teamNo === 1 && cdRow.teamCode === "Z1", `رقم الفريق ورمزه (${cdRow.teamCode}-${cdRow.teamNo})`);
+const kd = await (await call(ev1.sid, "/api/kpis?inst=" + mine.id)).json();
+const kc = kd.kpis.filter((k: { centralField: string | null }) => k.centralField);
+chk(kc.length === 7, `مؤشرات تسحب مقامها مركزياً (${kc.length})`);
+chk(
+  kd.kpis.find((k: { n: number }) => k.n === 8).centralValue === 40,
+  "المؤشر 8 يسحب عدد المعلمين",
+);
+chk(
+  kd.kpis.find((k: { n: number }) => k.n === 7).centralValue === 10,
+  "المؤشر 7 يسحب عدد المواد",
+);
+// المقام المركزي يحكم حتى لو أرسل المقيّم رقماً مخالفاً
+const forced = await (await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: { 8: { i: 1, j: 16 } },
+})).json();
+chk(
+  forced.kpiPct["8"] === 50,
+  `المقام المركزي 40 يحكم لا المُرسَل 1 → ${forced.kpiPct["8"]}% (16÷40=40% من هدف 80)`,
+);
+
+console.log("\n■ طلبات النقل");
+const badMove = await call(ev1.sid, "/api/transfers", "POST", {
+  instId: mine.id,
+  toEval: "Z2-1",
+  reason: "خارج الفريق",
+});
+chk(badMove.status === 400, "النقل خارج الفريق يُرفض (400)");
+const mv = await (await call(ev1.sid, "/api/transfers", "POST", {
+  instId: mine.id,
+  toEval: "Z1-4",
+  reason: "بُعد الموقع",
+})).json();
+chk(mv.ok, "المقيّم يرفع طلب نقل داخل فريقه");
+chk(
+  (await call(ev1.sid, "/api/transfers", "POST", { instId: mine.id, toEval: "Z1-5" })).status === 400,
+  "طلب ثانٍ معلّق لنفس المؤسسة يُرفض (400)",
+);
+chk(
+  (await call(ev1.sid, "/api/transfer-decide", "POST", { id: mv.id, approve: true })).status === 403,
+  "المقيّم لا يبتّ في طلبه (403)",
+);
+chk(
+  (await call(lead2.sid, "/api/transfer-decide", "POST", { id: mv.id, approve: true })).status === 403,
+  "رئيس فريق آخر لا يبتّ (403)",
+);
+const dec = await (await call(lead1.sid, "/api/transfer-decide", "POST", {
+  id: mv.id,
+  approve: true,
+})).json();
+chk(dec.ok && dec.status === "معتمد", "رئيس الفريق يعتمد النقل");
+const afterMv = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === mine.id);
+chk(afterMv.evaluator === "Z1-4", `المؤسسة انتقلت للمقيّم ${afterMv.evaluator}`);
+chk(
+  (await call(lead1.sid, "/api/transfer-decide", "POST", { id: mv.id, approve: false })).status === 400,
+  "البتّ مرة ثانية يُرفض (400)",
+);
+// إعادتها لمقيّمها الأصلي لبقية الاختبارات
+await call(tech.sid, "/api/assign", "POST", { instId: mine.id, evaluator: "Z1-1" });
+await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: rawFor(defs, 95) });
+
 console.log("\n■ الدورات والأداء التراكمي");
 const meNow = await (await call(tech.sid, "/api/me")).json();
 chk(meNow.meta.currentYear === "2025-2026", `العام الجاري ${meNow.meta.currentYear}`);

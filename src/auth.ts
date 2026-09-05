@@ -47,9 +47,20 @@ export function cookieHeader(sid: string, secure: boolean): string {
 
 // ── مصفوفة الصلاحيات ──
 export const PERMS: Record<Role, string[]> = {
-  eval: ["mine", "stats", "eval:write"],
-  lead: ["team", "stats", "top", "reports", "picks:write", "story:write"],
-  tech: ["tech", "team", "stats", "top", "reports", "accounts:write", "audit:read", "targets:write"],
+  eval: ["mine", "stats", "transfers", "eval:write", "transfer:ask"],
+  lead: ["team", "stats", "top", "reports", "transfers", "picks:write", "story:write", "transfer:decide"],
+  tech: [
+    "tech",
+    "team",
+    "stats",
+    "top",
+    "reports",
+    "transfers",
+    "accounts:write",
+    "audit:read",
+    "targets:write",
+    "transfer:decide",
+  ],
 };
 export function can(acc: Account, perm: string): boolean {
   return PERMS[acc.role].includes(perm);

@@ -8,10 +8,13 @@ const SECS = {
   stats: ["الإحصاءات", "حسب المرحلة والجنس ونسب التقدم", "📊"],
   top: ["أعلى 10 وقصص النجاح", "اختيار 3 مؤسسات للكتابة عنها", "★"],
   reports: ["التقارير", "ملخص الفريق والتصدير", "▦"],
-  tech: ["الحساب الفني", "الحسابات والصلاحيات وسجل التدقيق", "⚙"],
+  transfers: ["طلبات النقل", "نقل المؤسسات بين المقيّمين داخل الفريق", "⇄"],
+  tech: ["الحساب الفني", "البيانات المركزية والحسابات والمؤشرات", "⚙"],
 };
+/** ألوان تبويبات الأعوام: سابقتان · الحالي · القادم */
+const YRC = ["#8a94a6", "#6A1B9A", "#1E7145", "#BA7517"];
 let ME = null, META = null, PERMS = [], SEC = null, ROWS = [], TOP = null;
-let TGT = null, TGSTAGE = "school";
+let TGT = null, TGSTAGE = "school", VYEAR = null, EDITABLE = true;
 const TGDEFS = {};
 
 const fmt = (n, d = 0) =>
@@ -69,7 +72,12 @@ async function boot() {
   PERMS = me.perms;
   $("#login").hidden = true;
   $("#app").hidden = false;
-  $("#brandSub").textContent = `${META.year} · ${META.teams.length} فرق`;
+  VYEAR = VYEAR ?? META.currentYear;
+  const tm = ME.team ? META.teamMeta[ME.team] : null;
+  $("#brandSub").textContent = tm
+    ? `${tm.label} · رمز الفريق ${tm.code} · رقم ${tm.no}`
+    : `${META.teams.length} فرق تقييم`;
+  buildYearTabs();
   $("#who").innerHTML = `<div class="n">${esc(ME.name)}</div><div class="r">${esc(ME.title)}${
     ME.team ? " · " + esc(ME.team) : ""
   }</div><button id="soBtn">تسجيل الخروج</button>`;
@@ -79,6 +87,30 @@ async function boot() {
   if (ME.mustChange) setTimeout(() => openPw(true), 400);
   await render();
 }
+function buildYearTabs() {
+  let bar = document.getElementById("yearbar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "yearbar";
+    bar.className = "yearbar";
+    document.querySelector(".topbar").after(bar);
+  }
+  bar.innerHTML = META.yearWindow.map((y, i) =>
+    `<button class="ytab${y === VYEAR ? " on" : ""}" data-y="${y}"
+      style="--yc:${YRC[i]}">${y}${
+      y === META.currentYear ? '<span class="ybadge">الجاري</span>' : ""
+    }</button>`
+  ).join("") +
+    `<span class="ynote" id="ynote"></span>`;
+  bar.querySelectorAll(".ytab").forEach((b) =>
+    b.onclick = async () => {
+      VYEAR = b.dataset.y;
+      buildYearTabs();
+      await render();
+    }
+  );
+}
+
 function buildNav() {
   $("#nav").innerHTML = PERMS.map((k) =>
     `<a data-s="${k}" class="${k === SEC ? "active" : ""}">
@@ -103,9 +135,28 @@ async function render() {
   $("#content").innerHTML =
     `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
   try {
-    if (["mine", "team", "stats", "reports"].includes(SEC)) ROWS = (await api("/api/institutions")).rows;
+    if (["mine", "team", "stats", "reports"].includes(SEC)) {
+      const d = await api("/api/institutions?year=" + encodeURIComponent(VYEAR));
+      ROWS = d.rows;
+      EDITABLE = d.editable;
+      const note = $("#ynote");
+      if (note) {
+        note.textContent = EDITABLE
+          ? "العام الجاري — الإدخال متاح"
+          : `عرض فقط — الإدخال متاح في ${META.currentYear} وحده`;
+        note.className = "ynote" + (EDITABLE ? "" : " ro");
+      }
+    }
     if (SEC === "top") TOP = await api("/api/top");
-    const R = { mine: rMine, team: rTeam, stats: rStats, top: rTop, reports: rReports, tech: rTech };
+    const R = {
+      mine: rMine,
+      team: rTeam,
+      stats: rStats,
+      top: rTop,
+      reports: rReports,
+      transfers: rTransfers,
+      tech: rTech,
+    };
     $("#content").innerHTML = await R[SEC]();
     wire();
   } catch (e) {
@@ -154,7 +205,11 @@ function rMine() {
           ? `<span class="pill" style="background:${lvlColor(x.level)};color:#fff">${x.level}</span>`
           : "—"
       }</td>
-      <td><button class="btn sm" data-open="${x.id}">تقييم</button></td></tr>`
+      <td style="white-space:nowrap"><button class="btn sm" data-open="${x.id}">${
+        EDITABLE ? "تقييم" : "عرض"
+      }</button>${
+        EDITABLE && ME.role === "eval" ? `<button class="btn sm ghost" data-move="${x.id}">نقل</button>` : ""
+      }</td></tr>`
     ).join("") +
     `</tbody></table></div>`;
 }
@@ -224,7 +279,13 @@ async function openEval(id) {
             }>${s.v} — ${s.name}</option>`
           ).join("") + `</select></div>`;
       } else {
-        if (k.denom) {
+        if (k.denom && k.centralField) {
+          h += `<div class="fld"><label>${esc(k.denom)} — مركزي</label>
+            <div class="tgt">${k.centralValue ?? "—"}</div>
+            <div class="ogl">${
+            k.centralValue === null ? '<b style="color:var(--red)">غير مُدخل</b>' : "من بيانات المؤسسة"
+          }</div></div>`;
+        } else if (k.denom) {
           h += `<div class="fld"><label>${esc(k.denom)}</label>
             <input type="number" min="0" step="any" data-k="${k.n}" data-f="i" value="${g("i")}"></div>`;
         }
@@ -256,12 +317,24 @@ async function openEval(id) {
    <label style="font-size:12px;font-weight:700;color:var(--muted);display:block;margin:14px 0 5px">ملاحظات المقيّم</label>
    <textarea id="evNotes" rows="3">${esc(x.notes ?? "")}</textarea>
    <div style="display:flex;gap:9px;margin-top:15px;flex-wrap:wrap;align-items:center">
-     <button class="btn" id="evSave">حفظ التقييم</button>
+     ${EDITABLE ? '<button class="btn" id="evSave">حفظ التقييم</button>' : ""}
      <button class="btn ghost" id="evCancel">إلغاء</button>
      <span id="evProg" style="font-size:12px;color:var(--muted);font-weight:700"></span></div>
    </div>`;
   $("#modalBody").innerHTML = h;
 
+  const missCentral = K.kpis.filter((k) => k.centralField && k.centralValue === null);
+  if (missCentral.length) {
+    const box = document.createElement("div");
+    box.className = "tip red";
+    box.style.margin = "0 0 14px";
+    box.innerHTML = `بيانات المؤسسة المركزية ناقصة، فتعذّر حساب ${missCentral.length} مؤشراً تعتمد عليها ` +
+      `(${missCentral.map((k) => k.n).join(" · ")}). يدخلها الحساب الفني مرة واحدة للمؤسسة.`;
+    $("#modalBody").querySelector(".mbody").prepend(box);
+  }
+  if (!EDITABLE) {
+    $("#modalBody").querySelectorAll("[data-k], #evNotes").forEach((el) => el.disabled = true);
+  }
   $("#modalBody").querySelectorAll("[data-k]").forEach((el) => {
     const ev = el.tagName === "SELECT" ? "onchange" : "oninput";
     el[ev] = () => {
@@ -274,7 +347,7 @@ async function openEval(id) {
     };
   });
   $("#mClose").onclick = $("#evCancel").onclick = () => $("#modal").classList.remove("on");
-  $("#evSave").onclick = evSave;
+  if ($("#evSave")) $("#evSave").onclick = evSave;
   evCalc();
   evHistory(id);
 }
@@ -335,8 +408,9 @@ function evRow(k, raw) {
   if (!k.tgtEff) return null;
   let K;
   if (k.mode === "نسبة" && k.denom) {
-    const iv = raw?.i;
-    if (iv === undefined || iv === "" || Number(iv) === 0) return null;
+    // المقام المركزي يحكم متى توفّر، تماماً كما يحسبه الخادم
+    const iv = k.centralField ? k.centralValue : raw?.i;
+    if (iv === undefined || iv === null || iv === "" || Number(iv) === 0) return null;
     K = Number(jv) / Number(iv) * 100;
   } else K = Number(jv);
   if (!isFinite(K)) return null;
@@ -761,6 +835,23 @@ async function rTech() {
       <td style="white-space:nowrap"><button class="btn sm" data-acsave="${a.id}">حفظ</button>
       <button class="btn sm ghost" data-reset="${a.id}">كلمة المرور</button></td></tr>`
     ).join("") + `</tbody></table></div>
+  <h4 class="blk">البيانات المركزية للمؤسسات — ${esc(VYEAR)}</h4>
+  <p class="sl">عدد الطلبة والمعلمين والمواد يُدخل هنا مرة واحدة لكل مؤسسة في العام،
+    ويُسحب تلقائياً كمقام في المؤشرات التي تعتمد عليه، ويُشتق منه تصنيف حجم المؤسسة.
+    الإدخال متاح في العام الجاري وحده.</p>
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap" id="cdTabs">` +
+    META.teams.map((t) =>
+      `<button class="btn ghost" data-cd="${esc(t)}">${esc(t)} · ${META.teamMeta[t].code}</button>`
+    ).join("") +
+    `</div>
+  <div id="cdBox"></div>
+  <h4 class="blk">العام الدراسي الجاري</h4>
+  <p class="sl">تغيير العام يفتح دورة جديدة بصفحة بيضاء دون المساس بالدورات السابقة.</p>
+  <div style="display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
+    <div class="fld"><label>العام الجاري</label>
+      <input id="yrIn" value="${esc(META.currentYear)}" style="width:150px"></div>
+    <button class="btn" id="yrSave">تثبيت العام</button>
+  </div>
   <h4 class="blk">تعديل المؤشرات والمستهدفات</h4>
   <p class="sl">ما يُحفظ هنا يسري على كل المؤسسات فوراً ويُعاد حساب التقييمات المحفوظة عليه.
     الفراغ يعني الرجوع إلى نص الخطة ورقمها. المؤشرات الوصفية مستهدفها ثابت عند 100.
@@ -905,6 +996,168 @@ async function tgRender(stage) {
   };
 }
 
+/* ── البيانات المركزية — الحساب الفني ── */
+let CDTEAM = null;
+async function cdRender(team) {
+  CDTEAM = team;
+  document.querySelectorAll("#cdTabs [data-cd]").forEach((b) =>
+    b.className = "btn" + (b.dataset.cd === team ? "" : " ghost")
+  );
+  const box = $("#cdBox");
+  box.innerHTML = `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
+  const d = await api("/api/central?year=" + encodeURIComponent(VYEAR));
+  const rows = d.rows.filter((r) => r.team === team);
+  const ro = !d.editable;
+  let h = ro ? `<div class="tip amber">${esc(VYEAR)} ليس العام الجاري — عرض فقط.</div>` : "";
+  h += `<div class="tbl"><table><thead><tr><th style="width:70px">الرمز</th><th>المؤسسة</th>
+    <th style="width:110px">الطلبة</th><th style="width:110px">المعلمون</th>
+    <th style="width:110px">المواد</th><th style="width:150px">التصنيف المشتق</th></tr></thead><tbody>`;
+  rows.forEach((r) => {
+    const f = (k) =>
+      `<input type="number" min="0" step="1" style="width:92px" data-cdi="${r.id}" data-cdf="${k}"
+        value="${r[k] ?? ""}" ${ro ? "disabled" : ""}>`;
+    h += `<tr><td class="mono">${r.id}</td><td class="r">${esc(r.name)}</td>
+      <td>${f("students")}</td><td>${f("teachers")}</td><td>${f("subjects")}</td>
+      <td id="cds${r.id}">${
+      r.size
+        ? esc(r.size)
+        : `<span style="color:var(--muted)">${r.sizeSource ? esc(r.sizeSource) + " (سابق)" : "—"}</span>`
+    }</td></tr>`;
+  });
+  h += `</tbody></table></div>`;
+  if (!ro) {
+    h += `<div style="display:flex;gap:9px;margin-top:12px">
+      <button class="btn" id="cdSave">حفظ بيانات ${esc(team)}</button></div>`;
+  }
+  box.innerHTML = h;
+  const rule = META.sizeRule[team === "رياض الأطفال" ? "kg" : "school"];
+  box.querySelectorAll('[data-cdf="students"]').forEach((i) =>
+    i.oninput = () => {
+      const v = Number(i.value);
+      const cell = $("#cds" + i.dataset.cdi);
+      const hit = i.value === "" ? null : rule.find(([, a, b]) => v >= a && (b === null || v <= b));
+      cell.textContent = hit ? hit[0] : "—";
+    }
+  );
+  if ($("#cdSave")) {
+    $("#cdSave").onclick = async () => {
+      const map = {};
+      box.querySelectorAll("[data-cdi]").forEach((i) => {
+        map[i.dataset.cdi] = map[i.dataset.cdi] || { id: i.dataset.cdi };
+        map[i.dataset.cdi][i.dataset.cdf] = i.value;
+      });
+      try {
+        const r = await api("/api/central", {
+          method: "POST",
+          body: { year: VYEAR, rows: Object.values(map) },
+        });
+        toast(`حُفظت بيانات ${r.count} مؤسسة`);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+}
+
+/* ── طلبات النقل ── */
+let TRS = [];
+async function rTransfers() {
+  TRS = (await api("/api/transfers")).rows;
+  const canDecide = ME.role === "lead" || ME.role === "tech";
+  const st = { "معلّق": "var(--amber)", "معتمد": "var(--green)", "مرفوض": "var(--red)" };
+  let h = `<h3 class="st">طلبات النقل</h3>
+  <p class="sl">${
+    canDecide
+      ? "طلبات نقل المؤسسات بين مقيّمي الفريق. الاعتماد ينقل المؤسسة فوراً ويبقى تقييمها كما هو."
+      : "طلبات النقل التي قدّمتها أو التي تخصّ مؤسساتك. البتّ فيها من رئيس الفريق."
+  }</p>
+  <div class="kpis">
+    <div class="kpi amber"><div class="lbl">معلّقة</div><div class="val">${
+    TRS.filter((t) => t.status === "معلّق").length
+  }</div></div>
+    <div class="kpi"><div class="lbl">معتمدة</div><div class="val">${
+    TRS.filter((t) => t.status === "معتمد").length
+  }</div></div>
+    <div class="kpi red"><div class="lbl">مرفوضة</div><div class="val">${
+    TRS.filter((t) => t.status === "مرفوض").length
+  }</div></div>
+  </div>`;
+  if (!TRS.length) {
+    return h + `<div class="card" style="text-align:center;color:var(--muted)">لا توجد طلبات.</div>`;
+  }
+  h += `<div class="tbl"><table><thead><tr><th style="width:70px">المؤسسة</th><th>الاسم</th>
+    <th style="width:120px">الفريق</th><th style="width:90px">من</th><th style="width:90px">إلى</th>
+    <th>السبب</th><th style="width:90px">الحالة</th>${
+    canDecide ? '<th style="width:150px"></th>' : ""
+  }</tr></thead><tbody>`;
+  TRS.forEach((t) => {
+    h += `<tr><td class="mono">${t.instId}</td><td class="r">${esc(t.instName)}</td>
+      <td>${esc(t.team)}</td><td class="mono">${t.fromEval}</td><td class="mono">${t.toEval}</td>
+      <td class="r" style="font-size:11.5px">${esc(t.reason || "—")}</td>
+      <td><span class="pill" style="background:${st[t.status]}22;color:${
+      st[t.status]
+    }">${t.status}</span></td>
+      ${
+      canDecide
+        ? `<td style="white-space:nowrap">${
+          t.status === "معلّق"
+            ? `<button class="btn sm" data-tok="${t.id}">اعتماد</button>
+               <button class="btn sm ghost" data-tno="${t.id}">رفض</button>`
+            : `<span style="font-size:11px;color:var(--muted)">${esc(t.decidedBy ?? "")}</span>`
+        }</td>`
+        : ""
+    }</tr>`;
+  });
+  return h + `</tbody></table></div>`;
+}
+async function trDecide(id, approve) {
+  try {
+    const r = await api("/api/transfer-decide", { method: "POST", body: { id, approve } });
+    toast(`الطلب ${r.status}`);
+    await render();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+/** نافذة طلب نقل مؤسسة إلى مقيّم آخر في الفريق نفسه. */
+function openMove(id) {
+  const x = ROWS.find((r) => r.id === id);
+  const tm = META.teamMeta[x.team];
+  $("#modalBody").innerHTML = `
+   <div class="mhead"><div>
+     <div style="font-size:12px;opacity:.85">${x.id} · ${esc(tm.label)} · رمز ${tm.code}</div>
+     <div style="font-size:16px;font-weight:800;margin-top:3px">${esc(x.name)}</div></div>
+     <button class="btn" style="background:rgba(255,255,255,.2)" id="mClose">إغلاق</button></div>
+   <div class="mbody">
+     <div class="tip">النقل داخل الفريق نفسه فقط. الطلب يُرفع لرئيس الفريق، والتقييم المدخل يبقى مع المؤسسة.</div>
+     <label class="kel">المقيّم المطلوب نقلها إليه</label>
+     <select id="mvTo" style="width:100%;margin-bottom:12px"></select>
+     <label class="kel">سبب الطلب</label>
+     <textarea id="mvWhy" rows="3" placeholder="مثال: تعذّر الزيارة لبُعد الموقع"></textarea>
+     <div style="display:flex;gap:9px;margin-top:15px">
+       <button class="btn" id="mvSend">رفع الطلب</button>
+       <button class="btn ghost" id="mvCancel">إلغاء</button></div>
+   </div>`;
+  $("#modal").classList.add("on");
+  const code = tm.code;
+  $("#mvTo").innerHTML = [1, 2, 3, 4, 5].map((n) => `${code}-${n}`)
+    .filter((a) => a !== x.evaluator)
+    .map((a) => `<option value="${a}">${a}</option>`).join("");
+  $("#mClose").onclick = $("#mvCancel").onclick = () => $("#modal").classList.remove("on");
+  $("#mvSend").onclick = async () => {
+    try {
+      await api("/api/transfers", {
+        method: "POST",
+        body: { instId: id, toEval: $("#mvTo").value, reason: $("#mvWhy").value },
+      });
+      $("#modal").classList.remove("on");
+      toast("رُفع طلب النقل لرئيس الفريق");
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
 /* ── إسناد المؤسسات — الحساب الفني ── */
 let ASTEAM = null, ACCS = [];
 async function asRender(team) {
@@ -995,10 +1248,28 @@ function openPw(force = false) {
 /* ── ربط الأحداث ── */
 function wire() {
   document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openEval(b.dataset.open));
+  document.querySelectorAll("[data-move]").forEach((b) => b.onclick = () => openMove(b.dataset.move));
+  document.querySelectorAll("[data-tok]").forEach((b) => b.onclick = () => trDecide(b.dataset.tok, true));
+  document.querySelectorAll("[data-tno]").forEach((b) => b.onclick = () => trDecide(b.dataset.tno, false));
   if ($("#tgSchool")) {
     $("#tgSchool").onclick = () => tgRender("school");
     $("#tgKg").onclick = () => tgRender("kg");
     tgRender(TGSTAGE);
+  }
+  if ($("#cdTabs")) {
+    document.querySelectorAll("#cdTabs [data-cd]").forEach((b) => b.onclick = () => cdRender(b.dataset.cd));
+    cdRender(CDTEAM ?? META.teams[0]);
+  }
+  if ($("#yrSave")) {
+    $("#yrSave").onclick = async () => {
+      try {
+        const r = await api("/api/year", { method: "POST", body: { year: $("#yrIn").value.trim() } });
+        toast(`العام الجاري: ${r.year}`);
+        location.reload();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
   }
   if ($("#asTabs")) {
     document.querySelectorAll("#asTabs [data-as]").forEach((b) => b.onclick = () => asRender(b.dataset.as));

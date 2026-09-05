@@ -99,6 +99,9 @@ export const META = seed as unknown as {
   // deno-lint-ignore no-explicit-any
   kpi: Record<string, any[]>;
   sizeRule: Record<string, [string, number, number | null][]>;
+  teamMeta: Record<string, { code: string; no: number; kind: string; label: string }>;
+  denomMap: Record<string, string>;
+  centralFields: [string, string][];
 };
 
 // ── تشفير كلمات المرور: PBKDF2-SHA256 ──
@@ -201,6 +204,33 @@ export async function listInst(): Promise<Inst[]> {
   for await (const e of kv.list<Inst>({ prefix: ["inst"] })) out.push(e.value);
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
+/** بيانات المؤسسة المركزية لعام بعينه: تُدخَل مرة وتُسحب في كل المؤشرات. */
+export interface CentralData {
+  students: number | null;
+  teachers: number | null;
+  subjects: number | null;
+}
+export async function getCentral(year: string): Promise<Record<string, CentralData>> {
+  const out: Record<string, CentralData> = {};
+  for await (const e of kv.list<CentralData>({ prefix: ["central", year] })) {
+    out[String(e.key[2])] = e.value;
+  }
+  return out;
+}
+export async function setCentral(year: string, instId: string, d: CentralData) {
+  await kv.set(["central", year, instId], d);
+}
+
+/** تصنيف الحجم من عدد الطلبة حسب جدول الخطة. */
+export function sizeOf(team: string, students: number | null): string | null {
+  if (students === null || students === undefined) return null;
+  const rule = META.sizeRule[team === "رياض الأطفال" ? "kg" : "school"];
+  for (const [name, from, to] of rule) {
+    if (students >= from && (to === null || students <= to)) return name;
+  }
+  return null;
+}
+
 /** العام الدراسي الجاري — قابل للتغيير من الحساب الفني، وافتراضه عام الخطة. */
 export async function currentYear(): Promise<string> {
   return (await kv.get<string>(["settings", "year"])).value ?? META.year;
@@ -238,6 +268,34 @@ export async function getPicks(team: string): Promise<string[]> {
 }
 export async function setPicks(team: string, ids: string[]) {
   await kv.set(["picks", team], ids);
+}
+
+// ── طلبات نقل المؤسسات بين المقيّمين ──
+export interface Transfer {
+  id: string;
+  instId: string;
+  instName: string;
+  team: string;
+  fromEval: string;
+  toEval: string;
+  reason: string;
+  by: string;
+  at: string;
+  status: "معلّق" | "معتمد" | "مرفوض";
+  decidedBy?: string;
+  decidedAt?: string;
+  note?: string;
+}
+export async function listTransfers(): Promise<Transfer[]> {
+  const out: Transfer[] = [];
+  for await (const e of kv.list<Transfer>({ prefix: ["transfer"] })) out.push(e.value);
+  return out.sort((a, b) => b.at.localeCompare(a.at));
+}
+export async function setTransfer(t: Transfer) {
+  await kv.set(["transfer", t.id], t);
+}
+export async function getTransfer(id: string): Promise<Transfer | null> {
+  return (await kv.get<Transfer>(["transfer", id])).value;
 }
 
 // ── سجل التدقيق ──

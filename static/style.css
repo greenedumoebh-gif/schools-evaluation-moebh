@@ -856,3 +856,62 @@ h3.st::before {
   font-weight: 700;
   margin-bottom: 3px;
 }
+
+/* ── شريط الأعوام الدراسية ── */
+.yearbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 26px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+.ytab {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 9px;
+  padding: 7px 15px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 3px solid var(--yc);
+}
+.ytab:hover {
+  background: #f6f9f6;
+}
+.ytab.on {
+  background: var(--yc);
+  color: #fff;
+  border-color: var(--yc);
+}
+.ybadge {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 20px;
+  padding: 2px 7px;
+}
+.ytab:not(.on) .ybadge {
+  background: var(--green-l);
+  color: var(--green-d);
+}
+.ynote {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--green-d);
+  margin-right: auto;
+}
+.ynote.ro {
+  color: var(--amber);
+}
+@media print {
+  .yearbar {
+    display: none;
+  }
+}

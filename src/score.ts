@@ -1,6 +1,6 @@
 // طبقة الحساب — تُنفَّذ في الخادم وحده. الواجهة تعرض ولا تحسب.
 // المعادلة مطابقة لقسم «تجربة التقييم» في لوحة إعادة تنظيم التقييم.
-import { kv, META } from "./db.ts";
+import { type CentralData, kv, META } from "./db.ts";
 
 export interface Kpi {
   n: number;
@@ -128,19 +128,29 @@ export function effSecTarget(k: Kpi, ov: Targets): number | null {
   return o === undefined || o === null ? Number(k.sec) : Number(o);
 }
 
+/** المقام المسحوب مركزياً لهذا المؤشر، أو null إذا كان يُدخَل يدوياً. */
+export function centralDenom(k: Kpi, c: CentralData | undefined): number | null {
+  const f = k.denom ? META.denomMap[k.denom] : undefined;
+  if (!f || !c) return null;
+  const v = (c as unknown as Record<string, number | null>)[f];
+  return v === null || v === undefined ? null : Number(v);
+}
+
 /** نسبة تنفيذ مؤشر واحد، أو null إذا لم يُملأ. الحد الأعلى 100%. */
 export function rowPct(
   k: Kpi,
   raw: Raw | undefined,
   tgt: number,
   sec2: number | null,
+  central?: CentralData,
 ): number | null {
   const jv = raw?.j;
   if (jv === undefined || jv === null || jv === "") return null;
   if (!tgt) return null;
   let K: number;
   if (k.mode === "نسبة" && k.denom) {
-    const iv = raw?.i;
+    const cd = centralDenom(k, central);
+    const iv = cd !== null ? String(cd) : raw?.i;
     if (iv === undefined || iv === null || iv === "" || Number(iv) === 0) return null;
     K = Number(jv) / Number(iv) * 100;
   } else {
@@ -174,6 +184,7 @@ export function scoreInst(
   ref: StageRef,
   kpiRaw: Record<string, Raw>,
   ov: Targets,
+  central?: CentralData,
 ): Score {
   const st = stageOf(team);
   const ks = kpisOf(team);
@@ -182,7 +193,13 @@ export function scoreInst(
   const kpiPct: Record<string, number | null> = {};
   let pts = 0, filled = 0;
   for (const k of ks) {
-    const P = rowPct(k, kpiRaw[String(k.n)], effTarget(k, team, ref, ov), effSecTarget(k, ov));
+    const P = rowPct(
+      k,
+      kpiRaw[String(k.n)],
+      effTarget(k, team, ref, ov),
+      effSecTarget(k, ov),
+      central,
+    );
     kpiPct[String(k.n)] = P;
     if (P === null) continue;
     filled++;
