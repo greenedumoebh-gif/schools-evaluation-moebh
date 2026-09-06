@@ -411,6 +411,50 @@ with sync_playwright() as p:
     pg6.evaluate("()=>document.getElementById('modal').classList.remove('on')")
     pg6.wait_for_timeout(300)
 
+    # ── شاشة التقارير ──
+    pg6.locator('#nav a[data-s="reports"]').click()
+    pg6.wait_for_selector("#rpGen", timeout=15000)
+    lv = pg6.evaluate("()=>[...document.querySelectorAll('input[name=rplevel]')].map(i=>i.value)")
+    chk(lv == ["summary", "detailed", "full"], f"ثلاثة مستويات تفصيل ({' · '.join(lv)})")
+    chk(
+        pg6.locator("#rpNotes").is_checked() and pg6.locator("#rpStories").is_checked(),
+        "الملاحظات وقصص النجاح مُدرَجة افتراضياً",
+    )
+    org = pg6.evaluate("()=>document.querySelector('#rpTeam option').textContent")
+    chk("إدارة العمليات التعليمية" in org, f"الجهة المُصدِرة في القائمة ({org})")
+    pg6.click("#rpGen")
+    pg6.wait_for_selector("#rpDoc", timeout=20000)
+    pg6.wait_for_timeout(800)
+    body = pg6.locator("#rpDoc").inner_text()
+    chk("المنطقة التعليمية الأولى" in body, "ترويسة التقرير بالجهة المُصدِرة")
+    chk(pg6.locator("#rpDoc canvas").count() == 2, "رسما التقرير")
+    chk("الدكتور علي سلمان زهير" in body, "مدير المنطقة في صفحة الاعتماد")
+    chk("الأستاذ إبراهيم علي آل بورشيد" in body, "الوكيل المساعد في صفحة الاعتماد")
+    chk("الأستاذة سهى صالح حمادة" in body, "مدير عام شؤون المدارس في صفحة الاعتماد")
+    chk("الدكتورة نيلوفر أحمد الجهرمي" in body, "رئيس فريق التعليم الأخضر في صفحة الاعتماد")
+    chk("ملاحظات فرق التقييم" in body, "قسم الملاحظات موجود")
+    chk("قصص النجاح" in body, "قسم قصص النجاح موجود")
+    chk("تفصيل المؤشرات" not in body, "المستوى الإحصائي بلا تفصيل مؤشرات")
+
+    pg6.check('input[name="rplevel"][value="full"]')
+    pg6.click("#rpGen")
+    pg6.wait_for_selector("#rpDoc", timeout=25000)
+    pg6.wait_for_timeout(1200)
+    body2 = pg6.locator("#rpDoc").inner_text()
+    chk("المؤسسات على مستوى المحاور" in body2, "الموسّع يعرض جدول المحاور")
+    chk("تفصيل المؤشرات" in body2, "الموسّع يعرض تفصيل المؤشرات")
+    nsec = pg6.locator("#rpDoc .rsec").count()
+    chk(nsec > 5, f"أقسام التقرير الموسّع ({nsec})")
+    pg6.uncheck("#rpNotes")
+    pg6.uncheck("#rpStories")
+    pg6.click("#rpGen")
+    pg6.wait_for_selector("#rpDoc", timeout=25000)
+    pg6.wait_for_timeout(1000)
+    body3 = pg6.locator("#rpDoc").inner_text()
+    chk(
+        "ملاحظات فرق التقييم" not in body3 and "قصص النجاح" not in body3,
+        "إلغاء التحديد يستبعد الملاحظات والقصص",
+    )
     # ── لوحة توزيع المؤسسات بالسحب والإفلات ──
     chk("assign" in lnav, "شاشة التوزيع متاحة لرئيس الفريق")
     pg6.locator('#nav a[data-s="assign"]').click()
@@ -698,7 +742,42 @@ with sync_playwright() as p:
     pg8.wait_for_selector(".asgtabs .ytab", timeout=20000)
     chk(
         pg8.locator(".asgtabs .ytab").count() == 2,
-        f"تبويبا فريقيه فقط ({pg8.locator('.asgtabs .ytab').count()})",
+        f"تبويبا فريقيه فقط في شاشة التوزيع ({pg8.locator('.asgtabs .ytab').count()})",
+    )
+    # شاشة المؤسسات: تبويب لكل منطقة بدل عرض الكل دفعة واحدة
+    pg8.locator('#nav a[data-s="mine"]').click()
+    pg8.wait_for_selector("#content tbody tr", timeout=20000)
+    mt = pg8.evaluate("()=>[...document.querySelectorAll('[data-mteam]')].map(b=>b.dataset.mteam)")
+    chk(mt == ["منطقة 1", "منطقة 2"], f"تبويبا المنطقتين في شاشة التقييم ({' · '.join(mt)})")
+    n1 = pg8.locator("#content tbody tr").count()
+    chk(n1 < 120, f"المعروض منطقة واحدة لا الكل ({n1} صفاً)")
+    hdr8 = pg8.locator("#content thead th").all_inner_texts()
+    chk("المقيّم" in hdr8, "عمود المقيّم ظاهر لرئيس الفرق")
+    pg8.locator('[data-mteam="منطقة 2"]').click()
+    pg8.wait_for_timeout(1500)
+    n2 = pg8.locator("#content tbody tr").count()
+    chk(
+        n2 != n1 and pg8.locator('[data-mteam="منطقة 2"].on').count() == 1,
+        f"التبويب ينقل إلى المنطقة الثانية ({n1} ← {n2})",
+    )
+    ids = pg8.evaluate(
+        "()=>[...document.querySelectorAll('#content tbody tr')].map(r=>r.children[0].innerText.trim())"
+    )
+    chk(all(i.startswith("Z2-") for i in ids), "كل الصفوف من المنطقة المختارة")
+    # لوحة الفرق: جدول لكل فريق
+    pg8.locator('#nav a[data-s="team"]').click()
+    pg8.wait_for_selector("#content table", timeout=20000)
+    chk(
+        pg8.locator("#content .card").count() == 2,
+        f"لوحة الفرق تعرض فريقيه ({pg8.locator('#content .card').count()})",
+    )
+    chk("فرق ضمن نطاقك" in pg8.locator("#content").inner_text(), "العنوان يعبّر عن تعدد الفرق")
+    # طلبات النقل: أزرار البتّ متاحة له
+    pg8.locator('#nav a[data-s="transfers"]').click()
+    pg8.wait_for_timeout(1500)
+    chk(
+        "البتّ فيها من رئيس الفريق" not in pg8.locator("#content").inner_text(),
+        "رئيس الفرق يُعرض له نص صاحب القرار لا نص المقيّم",
     )
     # تعديل سطرين معاً ثم حفظ واحد
     pg2.fill('[data-ac="Z4-1"][data-af="name"]', "اسم مجمَّع أول")

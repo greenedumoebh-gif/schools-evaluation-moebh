@@ -318,7 +318,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.10.1", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.11.1", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;
@@ -510,6 +510,94 @@ chk(
   kgRow.stage === "رياض أطفال" && kgRow.sector === "رياض أطفال" &&
     kgRow.size === "الروضة المتوسطة",
   `الروضة الجديدة مرحلتها وقطاعها وتصنيفها صحيحة (${kgRow.size})`,
+);
+
+console.log("\n■ بيانات التقارير");
+chk(
+  (await call(ev1.sid, "/api/report?team=" + encodeURIComponent("منطقة 1"))).status === 403,
+  "المقيّم لا يولّد التقارير (403)",
+);
+chk(
+  (await call(lead1.sid, "/api/report?team=" + encodeURIComponent("منطقة 2"))).status === 403,
+  "رئيس الفريق لا يولّد تقرير فريق آخر (403)",
+);
+const rp1 = await (await call(
+  lead1.sid,
+  "/api/report?team=" + encodeURIComponent("منطقة 1") + "&level=summary",
+)).json();
+chk(
+  rp1.issuer.org === "إدارة العمليات التعليمية — المنطقة التعليمية الأولى" &&
+    rp1.issuer.managerName === "الدكتور علي سلمان زهير" &&
+    rp1.issuer.underName === "الأستاذ إبراهيم علي آل بورشيد" &&
+    rp1.issuer.dgName === "الأستاذة سهى صالح حمادة",
+  "الجهة المُصدِرة والمعتمدون للمنطقة الأولى",
+);
+chk(
+  rp1.greenLead.name === "الدكتورة نيلوفر أحمد الجهرمي",
+  `رئيس فريق التعليم الأخضر (${rp1.greenLead.name})`,
+);
+const rpKg = await (await call(
+  tech.sid,
+  "/api/report?team=" + encodeURIComponent("رياض الأطفال"),
+)).json();
+chk(
+  rpKg.issuer.org === "إدارة تراخيص ومتابعة التعليم المبكر" &&
+    rpKg.issuer.dgName === "الأستاذة نوال إبراهيم الخاطر",
+  "رياض الأطفال تصدر عن إدارة التعليم المبكر ويعتمدها وكيل الوزارة",
+);
+chk(
+  rp1.rows.every((r: { kpis?: unknown; kpiNotes?: unknown }) => !r.kpis && !r.kpiNotes),
+  "المستوى الإحصائي بلا مؤشرات ولا ملاحظات مؤشرات",
+);
+const rp2 = await (await call(
+  lead1.sid,
+  "/api/report?team=" + encodeURIComponent("منطقة 1") + "&level=detailed",
+)).json();
+chk(
+  rp2.rows.every((r: { axes: unknown; kpiNotes: unknown }) => r.axes && Array.isArray(r.kpiNotes)),
+  "المستوى التفصيلي يعطي المحاور وملاحظات المؤشرات",
+);
+chk(
+  rp2.rows.every((r: { kpis?: unknown }) => !r.kpis),
+  "التفصيلي لا يحمل المؤشرات كاملة",
+);
+// نسجّل ملاحظات وترشيحاً قبل توليد التقرير الموسّع حتى نتحقّق من ظهورهما فيه
+await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: { ...rawFor(defs, 92), 1: { ...rawFor(defs, 92)["1"], note: "ملاحظة تظهر في التقرير" } },
+  notes: "ملاحظة عامة تظهر في تقرير الفريق",
+  story: { on: true, text: "قصة نجاح مرشَّحة تظهر في التقرير" },
+});
+const rp3 = await (await call(
+  lead1.sid,
+  "/api/report?team=" + encodeURIComponent("منطقة 1") + "&level=full",
+)).json();
+const one3 = rp3.rows.find((r: { id: string }) => r.id === mine.id);
+chk(one3.kpis.length === 31, `الموسّع يعطي 31 مؤشراً لكل مؤسسة (${one3.kpis.length})`);
+chk(
+  one3.kpis.every((k: { tgt: number; pct: number | null }) => k.tgt > 0),
+  "كل مؤشر بمستهدفه الساري",
+);
+chk(
+  rp3.rows.some((r: { notes: string }) => r.notes.includes("ملاحظة عامة تظهر")),
+  "ملاحظات المقيّمين العامة ضمن بيانات التقرير",
+);
+chk(
+  rp3.rows.some((r: { kpiNotes: { note: string }[] }) =>
+    r.kpiNotes.some((k) => k.note.includes("تظهر في التقرير"))
+  ),
+  "ملاحظات المؤشرات ضمن التقرير الموسّع",
+);
+const nomRep = rp3.rows.filter((r: { story: { on: boolean } }) => r.story?.on);
+chk(nomRep.length >= 1, `قصص النجاح المرشَّحة ضمن التقرير (${nomRep.length})`);
+chk(Array.isArray(rp3.picks) && Array.isArray(rp3.stories), "الاختيارات المعتمدة وقصصها مرفقة");
+const rpArch = await (await call(
+  lead1.sid,
+  "/api/report?team=" + encodeURIComponent("منطقة 1") + "&level=full&year=2025-2026",
+)).json();
+chk(
+  rpArch.rows.every((r: { archived: boolean; basis: string }) => !r.archived || r.basis === "لوغاريتمية"),
+  "تقرير العام المؤرشف يوسم منهجيته ولا يخترع مؤشرات",
 );
 
 console.log("\n■ إنشاء الحسابات والأدوار الجديدة");

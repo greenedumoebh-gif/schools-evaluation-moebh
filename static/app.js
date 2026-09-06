@@ -253,34 +253,57 @@ function chartCard(id, title, sub, wide) {
 }
 
 /* ── مؤسساتي ── */
+let MTEAM = null;
 function rMine() {
-  const d = done(ROWS);
   const arch = ARCHIVED
     ? `<div class="tip amber"><b>${esc(VYEAR)} عام مؤرشف.</b>
        النتائج معروضة كما وردت في الملفات المركزية، وحُسبت بالمعادلة اللوغاريتمية السابقة
        ومسطرتها. لا تُقارَن بنقاط المنصة ولا يُدخل فيها تقييم.</div>`
     : "";
-  const isLead = ME.role === "lead";
-  return `<h3 class="st">${isLead ? "مؤسسات الفريق والتقييم" : "مؤسساتي"}</h3>
-  <p class="sl">${esc(ME.name)} · ${esc(ME.team ?? "")} — ${ROWS.length} مؤسسة ${
-    isLead ? "ضمن فريقك، ولك إدخال التقييم وتعديله في أيٍّ منها" : "مسندة إليك"
-  }.</p>${arch}
+  const teams = myTeams();
+  const multi = teams.length > 1;
+  // النطاق متعدد الفرق: تبويب لكل فريق بدل عرض كل المؤسسات دفعة واحدة
+  if (multi && !teams.includes(MTEAM)) MTEAM = teams[0];
+  const rows = multi ? ROWS.filter((x) => x.team === MTEAM) : ROWS;
+  const d = done(rows);
+  const scopeTxt = ME.role === "eval"
+    ? "مسندة إليك"
+    : multi
+    ? "ضمن الفريق المختار، ولك إدخال التقييم وتعديله في أيٍّ منها"
+    : "ضمن فريقك، ولك إدخال التقييم وتعديله في أيٍّ منها";
+  return `<h3 class="st">${
+    ME.role === "eval" ? "مؤسساتي" : multi ? "مؤسسات الفرق والتقييم" : "مؤسسات الفريق والتقييم"
+  }</h3>
+  <p class="sl">${esc(ME.name)} · ${
+    multi ? `${teams.length} فرق ضمن نطاقك` : esc(teams[0] ?? "")
+  } — ${rows.length} مؤسسة ${scopeTxt}.</p>${arch}
+  ${
+    multi
+      ? `<div class="asgtabs">${
+        teams.map((t) =>
+          `<button class="ytab${t === MTEAM ? " on" : ""}" data-mteam="${esc(t)}"
+            style="--yc:${AXC[(META.teamMeta[t].no % 4) + 1]}">${esc(META.teamMeta[t].tab)}
+            <span class="ybadge">${ROWS.filter((x) => x.team === t).length}</span></button>`
+        ).join("")
+      }</div>`
+      : ""
+  }
   ${
     PERMS.includes("assign") && !ARCHIVED
       ? `<div style="margin-bottom:12px"><button class="btn" id="mineAdd">إضافة مؤسسات</button></div>`
       : ""
   }
   <div class="kpis">
-   <div class="kpi"><div class="lbl">مؤسسة مسندة</div><div class="val">${ROWS.length}</div></div>
+   <div class="kpi"><div class="lbl">مؤسسة مسندة</div><div class="val">${rows.length}</div></div>
    <div class="kpi"><div class="lbl">مكتملة</div><div class="val">${d.length}</div></div>
    <div class="kpi amber"><div class="lbl">قيد التقييم</div><div class="val">${
-    ROWS.filter((x) => x.status === "قيد التقييم").length
+    rows.filter((x) => x.status === "قيد التقييم").length
   }</div></div>
    <div class="kpi red"><div class="lbl">لم تبدأ</div><div class="val">${
-    ROWS.filter((x) => x.status === "لم يبدأ").length
+    rows.filter((x) => x.status === "لم يبدأ").length
   }</div></div>
    <div class="kpi blue"><div class="lbl">نسبة الإنجاز</div><div class="val">${
-    ROWS.length ? (d.length / ROWS.length * 100).toFixed(0) : 0
+    rows.length ? (d.length / rows.length * 100).toFixed(0) : 0
   }<small>%</small></div></div>
    <div class="kpi"><div class="lbl">متوسط النتيجة</div><div class="val">${
     d.length ? avgOf(d).toFixed(1) + "%" : "—"
@@ -289,10 +312,10 @@ function rMine() {
   <div class="tbl"><table><thead><tr><th style="width:78px">الرمز</th><th>المؤسسة</th>
    <th style="width:96px">القطاع</th>
    <th style="width:120px">المرحلة</th><th style="width:70px">الجنس</th><th style="width:62px">الطلبة</th>
-   <th style="width:110px">التصنيف</th>${ME.role === "lead" ? '<th style="width:80px">المقيّم</th>' : ""}
+   <th style="width:110px">التصنيف</th>${ME.role === "eval" ? "" : '<th style="width:80px">المقيّم</th>'}
    <th style="width:105px">الحالة</th><th style="width:72px">النتيجة</th><th style="width:115px">التقدير</th>
    <th style="width:80px"></th></tr></thead><tbody>` +
-    ROWS.map((x) =>
+    rows.map((x) =>
       `<tr><td class="mono">${x.id}</td><td class="r">${esc(x.name)}</td>
       <td><span class="pill ${SECP[x.sector] ?? ""}">${esc(x.sector)}</span></td>
       <td>${esc(x.stage ?? "غير مسجَّل")}</td><td>${esc(x.gender ?? "غير مسجَّل")}</td>
@@ -300,6 +323,7 @@ function rMine() {
       <td><span class="pill" style="background:${SC[x.status]}22;color:${
         SC[x.status]
       }">${x.status}</span></td>
+${ME.role === "eval" ? "" : `<td class="mono">${esc(x.evaluator)}</td>`}
       <td><b>${x.pct !== null ? x.pct + "%" : "—"}</b></td>
       <td>${
         x.level
@@ -691,9 +715,11 @@ async function evSave() {
 
 /* ── لوحة الفريق ── */
 function rTeam() {
-  const teams = ME.role === "tech" ? META.teams : [ME.team];
-  return `<h3 class="st">لوحة الفريق</h3>
-  <p class="sl">${ME.role === "tech" ? "كل الفرق" : esc(ME.team)} — نسب الإنجاز ومتوسط النتائج.</p>` +
+  const teams = myTeams();
+  return `<h3 class="st">${teams.length > 1 ? "لوحة الفرق" : "لوحة الفريق"}</h3>
+  <p class="sl">${
+    teams.length > 1 ? `${teams.length} فرق ضمن نطاقك` : esc(teams[0] ?? "")
+  } — نسب الإنجاز ومتوسط النتائج، لكل فريق جدوله.</p>` +
     teams.map((t) => {
       const list = ROWS.filter((x) => x.team === t), d = done(list);
       if (!list.length) return "";
@@ -971,36 +997,273 @@ function openStory(id) {
 }
 
 /* ── التقارير ── */
+const RLEVELS = [
+  ["summary", "إحصائي", "أرقام الفريق وتوزيع التقديرات ومتوسط المحاور"],
+  ["detailed", "تفصيلي", "كل مؤسسة على مستوى المحاور الأربعة، مع ملاحظات المقيّمين"],
+  ["full", "تفصيلي موسّع", "كل مؤشر بقيمته ومستهدفه ونسبته وملاحظته لكل مؤسسة"],
+];
+let REP = null;
+
 function rReports() {
-  const teams = ME.role === "tech" ? META.teams : [ME.team];
-  let h = `<h3 class="st">التقارير</h3><p class="sl">ملخص جاهز للطباعة أو التصدير.</p>`;
-  teams.forEach((t) => {
-    const list = ROWS.filter((x) => x.team === t), d = done(list);
-    if (!list.length) return;
-    const dist = {};
-    META.rubric.forEach((b) => dist[b.n] = 0);
-    d.forEach((x) => dist[x.level]++);
-    h += `<div class="card"><b style="font-size:16px;color:var(--green-d)">${esc(t)}</b>
-      <div class="tbl" style="margin:11px 0 0"><table><tbody>
-      <tr><td class="r">عدد المؤسسات</td><td><b>${list.length}</b></td>
-          <td class="r">مكتملة التقييم</td><td><b>${d.length}</b> (${
-      (d.length / list.length * 100).toFixed(0)
-    }%)</td></tr>
-      <tr><td class="r">متوسط النتيجة</td><td><b>${d.length ? avgOf(d).toFixed(1) + "%" : "—"}</b></td>
-          <td class="r">أعلى نتيجة</td><td><b>${
-      d.length ? Math.max(...d.map((x) => x.pct)) + "%" : "—"
-    }</b></td></tr>` +
-      META.rubric.map((b) =>
-        `<tr><td class="r">${b.n}</td><td colspan="3"><b>${dist[b.n]}</b> مؤسسة (${
-          d.length ? (dist[b.n] / d.length * 100).toFixed(1) : 0
-        }%)</td></tr>`
-      ).join("") + `</tbody></table></div></div>`;
+  const mine = myTeams();
+  return `<h3 class="st">التقارير</h3>
+  <p class="sl">اختر الجهة ومستوى التفصيل، ثم ولّد التقرير واطبعه أو احفظه PDF من المتصفح.</p>
+  <div class="card">
+    <div class="finputs" style="padding:0;align-items:flex-end">
+      <div class="fld" style="flex:1 1 280px"><label>الجهة المُصدِرة</label>
+        <select id="rpTeam" style="width:100%">${
+    mine.map((t) => `<option value="${esc(t)}">${esc(META.issuers[t].org)}</option>`).join("")
+  }</select></div>
+      <div class="fld"><label>العام الدراسي</label>
+        <div class="tgt" style="width:auto;padding:8px 14px">${esc(VYEAR)}</div></div>
+    </div>
+    <h4 class="blk">مستوى التفصيل</h4>
+    ${
+    RLEVELS.map(([v, t, d]) =>
+      `<label class="ckrow" style="align-items:flex-start">
+        <input type="radio" name="rplevel" value="${v}" ${v === "summary" ? "checked" : ""}>
+        <span><b>${t}</b>
+          <div style="font-weight:400;font-size:11.5px;color:var(--muted);margin-top:2px">${d}</div>
+        </span></label>`
+    ).join("")
+  }
+    <h4 class="blk">ما يُدرَج في التقرير</h4>
+    <label class="ckrow"><input type="checkbox" id="rpNotes" checked>
+      <span>ملاحظات المقيّمين — العامة وملاحظات المؤشرات</span></label>
+    <label class="ckrow"><input type="checkbox" id="rpStories" checked>
+      <span>قصص النجاح — المعتمدة والمرشَّحة</span></label>
+    <div style="display:flex;gap:9px;margin-top:14px;flex-wrap:wrap">
+      <button class="btn" id="rpGen">توليد التقرير</button>
+      <button class="btn ghost" id="csvBtn">تصدير CSV</button>
+    </div>
+  </div>
+  <div id="rpOut"></div>`;
+}
+
+async function repGenerate() {
+  const team = $("#rpTeam").value;
+  const level = document.querySelector('input[name="rplevel"]:checked').value;
+  const withNotes = $("#rpNotes").checked, withStories = $("#rpStories").checked;
+  $("#rpOut").innerHTML = `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التوليد…</div>`;
+  try {
+    REP = await api(
+      `/api/report?team=${encodeURIComponent(team)}&level=${level}&year=${encodeURIComponent(VYEAR)}`,
+    );
+  } catch (e) {
+    $("#rpOut").innerHTML = `<div class="tip red">${esc(e.message)}</div>`;
+    return;
+  }
+  $("#rpOut").innerHTML = repHtml(REP, { withNotes, withStories });
+  const b = $("#rpPrint");
+  if (b) b.onclick = () => globalThis.print();
+  repCharts(REP);
+}
+
+function repHtml(D, opt) {
+  const d = D.rows.filter((x) => x.status === "مكتمل" && x.pct !== null);
+  const dist = {};
+  META.rubric.forEach((b) => dist[b.n] = 0);
+  d.forEach((x) => dist[x.level]++);
+  const avg = d.length ? d.reduce((s, x) => s + x.pct, 0) / d.length : 0;
+  const axAvg = [1, 2, 3, 4].map((a) => {
+    const v = d.map((x) => x.axes?.[a]).filter((z) => z !== null && z !== undefined);
+    return v.length ? Math.round(v.reduce((s, z) => s + z, 0) / v.length * 10) / 10 : 0;
   });
-  h += `<div style="display:flex;gap:9px;flex-wrap:wrap">
-    <button class="btn" id="prBtn">طباعة</button>
-    <button class="btn ghost" id="csvBtn">تصدير CSV</button></div>`;
+  const today = new Date().toLocaleDateString("ar-BH-u-nu-latn");
+  const lvl = RLEVELS.find(([v]) => v === D.level)[1];
+
+  let h = `<div class="report" id="rpDoc">
+  <div style="display:flex;gap:9px;margin-bottom:14px" class="noprint">
+    <button class="btn" id="rpPrint">طباعة / حفظ PDF</button></div>
+
+  <section class="rsec">
+    <div class="rhead">
+      <div><div class="rorg">${esc(D.issuer.org)}</div>
+        <h2>تقرير تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر</h2>
+        <div class="rmeta">العام الدراسي ${esc(D.year)} · ${esc(lvl)} · صادر بتاريخ ${today}</div></div>
+      <div class="rbadge">${esc(D.teamMeta.code)}</div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="lbl">إجمالي المؤسسات</div><div class="val">${D.rows.length}</div></div>
+      <div class="kpi"><div class="lbl">مكتملة التقييم</div><div class="val">${d.length}</div></div>
+      <div class="kpi"><div class="lbl">متوسط النتيجة</div><div class="val">${
+    d.length ? avg.toFixed(1) + "%" : "—"
+  }</div></div>
+      <div class="kpi"><div class="lbl">التقدير الغالب</div><div class="val" style="font-size:16px">${
+    d.length ? Object.entries(dist).sort((a, b) => b[1] - a[1])[0][0] : "—"
+  }</div></div>
+    </div>
+    <div class="charts">
+      ${chartCard("rpDist", "توزيع التقديرات", "المؤسسات المكتملة حسب المسطرة المعتمدة")}
+      ${chartCard("rpAx", "متوسط نسبة التنفيذ لكل محور", "على المؤسسات المكتملة")}
+    </div>
+    <div class="tbl"><table><thead><tr><th>التقدير</th><th style="width:110px">عدد المؤسسات</th>
+      <th style="width:110px">النسبة</th></tr></thead><tbody>` +
+    META.rubric.map((b) =>
+      `<tr><td class="r" style="color:${lvlColor(b.n)};font-weight:700">${b.n}</td>
+        <td>${dist[b.n]}</td><td>${d.length ? (dist[b.n] / d.length * 100).toFixed(1) : 0}%</td></tr>`
+    ).join("") +
+    `<tr style="background:var(--green-l);font-weight:800"><td class="r">المجموع</td>
+      <td>${d.length}</td><td>100%</td></tr></tbody></table></div>
+    <div class="tbl"><table><thead><tr><th>المحور</th><th style="width:120px">متوسط التنفيذ</th>
+      <th style="width:120px">وزن المحور</th></tr></thead><tbody>` +
+    [1, 2, 3, 4].map((a) =>
+      `<tr><td class="r" style="border-right:4px solid ${AXC[a]}">${esc(META.axname[a])}</td>
+        <td><b>${axAvg[a - 1]}%</b></td><td>${fmt(D.axw[a])}</td></tr>`
+    ).join("") + `</tbody></table></div>
+  </section>`;
+
+  // ── قصص النجاح ──
+  if (opt.withStories) {
+    const picked = D.rows.filter((x) => D.picks.includes(x.id));
+    const nominated = D.rows.filter((x) => x.story?.on && !D.picks.includes(x.id));
+    h += `<section class="rsec"><h3 class="rsech">قصص النجاح</h3>`;
+    if (!picked.length && !nominated.length) {
+      h += `<div class="tip">لا قصص معتمدة ولا مرشَّحة في هذا الفريق حتى تاريخه.</div>`;
+    }
+    picked.forEach((x) => {
+      const st = D.stories.find((s) => s.instId === x.id);
+      h += `<div class="story"><div class="story-h"><b>${esc(x.name)}</b>
+        <span class="pill" style="background:var(--green);color:#fff">معتمدة</span>
+        <span class="pill">${x.pct === null ? "—" : x.pct + "%"}</span></div>
+        ${st?.title ? `<div class="story-t">${esc(st.title)}</div>` : ""}
+        <div class="story-b">${esc(st?.text || x.story?.text || "لم يُكتب نص القصة بعد.")}</div></div>`;
+    });
+    nominated.forEach((x) => {
+      h += `<div class="story"><div class="story-h"><b>${esc(x.name)}</b>
+        <span class="pill purple">مرشَّحة</span>
+        <span class="pill">${x.pct === null ? "—" : x.pct + "%"}</span></div>
+        <div class="story-b">${esc(x.story.text || "بلا تعليق.")}</div>
+        <div class="story-n">ترشيح من المقيّم — لم يُعتمد بعد.</div></div>`;
+    });
+    h += `</section>`;
+  }
+
+  // ── ملاحظات المقيّمين ──
+  if (opt.withNotes) {
+    const withN = D.rows.filter((x) => x.notes || (x.kpiNotes ?? []).length);
+    h += `<section class="rsec"><h3 class="rsech">ملاحظات فرق التقييم</h3>`;
+    if (!withN.length) {
+      h += `<div class="tip">لم تُسجَّل ملاحظات على مؤسسات هذا الفريق حتى تاريخه.</div>`;
+    }
+    withN.forEach((x) => {
+      h += `<div class="rnote"><div class="rnote-h"><b>${esc(x.name)}</b>
+        <span class="mono">${x.id}</span> · <span>${esc(x.evaluator)}</span></div>`;
+      if (x.notes) h += `<div class="rnote-b">${esc(x.notes)}</div>`;
+      (x.kpiNotes ?? []).forEach((k) => {
+        h += `<div class="rnote-k"><span class="fnum" style="width:26px">${k.n}</span>
+          <div><div class="rnote-kt">${esc(k.kpi)}</div>
+          <div class="rnote-b">${esc(k.note)}</div></div></div>`;
+      });
+      h += `</div>`;
+    });
+    h += `</section>`;
+  }
+
+  // ── التفصيلي: المؤسسات على مستوى المحاور ──
+  if (D.level !== "summary") {
+    h += `<section class="rsec"><h3 class="rsech">المؤسسات على مستوى المحاور</h3>
+      <div class="tbl"><table><thead><tr><th style="width:66px">الرمز</th><th>المؤسسة</th>
+      <th style="width:96px">المرحلة</th>` +
+      [1, 2, 3, 4].map((a) => `<th style="width:64px;background:${AXC[a]}">محور ${a}</th>`).join("") +
+      `<th style="width:70px">النتيجة</th><th style="width:110px">التقدير</th></tr></thead><tbody>` +
+      D.rows.map((x) =>
+        `<tr><td class="mono">${x.id}</td><td class="r">${esc(x.name)}</td>
+        <td>${esc(x.stage ?? "—")}</td>` +
+        [1, 2, 3, 4].map((a) =>
+          `<td>${x.axes?.[a] === null || x.axes?.[a] === undefined ? "—" : x.axes[a] + "%"}</td>`
+        ).join("") +
+        `<td><b>${x.pct === null ? "—" : x.pct + "%"}</b></td>
+        <td style="color:${x.level ? lvlColor(x.level) : "var(--muted)"};font-weight:700">${
+          esc(x.level ?? x.status)
+        }</td></tr>`
+      ).join("") + `</tbody></table></div></section>`;
+  }
+
+  // ── الموسّع: المؤشرات لكل مؤسسة ──
+  if (D.level === "full") {
+    D.rows.filter((x) => (x.kpis ?? []).length).forEach((x) => {
+      h += `<section class="rsec rbreak"><h3 class="rsech">${esc(x.name)} — تفصيل المؤشرات</h3>
+        <div class="rmeta">${x.id} · ${esc(x.stage ?? "—")} · ${
+        x.pct === null ? "غير مكتمل" : x.pct + "% · " + x.level
+      }</div>
+        <div class="tbl"><table><thead><tr><th style="width:40px">م</th><th>المؤشر</th>
+        <th style="width:56px">النوع</th><th style="width:66px">المستهدف</th>
+        <th style="width:66px">المُدخل</th><th style="width:64px">النسبة</th>
+        <th style="width:66px">النقاط</th></tr></thead><tbody>` +
+        x.kpis.map((k) =>
+          `<tr><td class="mono">${k.n}</td>
+          <td class="r" style="font-size:11px">${esc(k.kpi).slice(0, 120)}${
+            k.note ? `<div class="rnote-b" style="margin-top:3px">${esc(k.note)}</div>` : ""
+          }</td>
+          <td>${esc(k.mode)}</td><td>${fmt(k.tgt, k.tgt % 1 ? 2 : 0)}</td>
+          <td>${k.j === null ? "—" : (k.i ? `${k.j} ÷ ${k.i}` : k.j)}</td>
+          <td><b>${k.pct === null ? "—" : k.pct + "%"}</b></td>
+          <td>${k.pct === null ? "—" : (k.w * k.pct / 100).toFixed(1)}</td></tr>`
+        ).join("") + `</tbody></table></div></section>`;
+    });
+  }
+
+  // ── الاعتماد ──
+  const box = (t, n) =>
+    `<div class="apbox"><div class="ap-l">${esc(t)}</div>
+      <div class="ap-n">${esc(n)}</div>
+      <div class="ap-s">التوقيع: ....................</div>
+      <div class="ap-s">التاريخ: ..... / ..... / ${esc(D.year.slice(0, 4))}</div></div>`;
+  h += `<section class="rsec rbreak"><h3 class="rsech">الاعتماد</h3>
+    <p class="sl">تقرير ${esc(D.issuer.org)} للعام الدراسي ${esc(D.year)}، صادر بتاريخ ${today}
+      عن ${esc(D.generatedBy.name)} — ${esc(D.generatedBy.title)}.</p>
+    <div class="aprow">${box(D.issuer.managerTitle, D.issuer.managerName)}${
+    box(D.issuer.underTitle, D.issuer.underName)
+  }</div>
+    <div class="aprow">${box(D.issuer.dgTitle, D.issuer.dgName)}${
+    box(D.greenLead.title, D.greenLead.name)
+  }</div>
+    <div class="tip">للأهمية: يُسلَّم هذا التقرير إلى فريق التعليم الأخضر بالوزارة بهدف تحليل
+      النتائج وتقييمها واتخاذ الإجراءات المناسبة.</div>
+  </section></div>`;
   return h;
 }
+
+function repCharts(D) {
+  const d = D.rows.filter((x) => x.status === "مكتمل" && x.pct !== null);
+  const dist = META.rubric.map((b) => d.filter((x) => x.level === b.n).length);
+  drawChart("rpDist", {
+    type: "doughnut",
+    data: {
+      labels: META.rubric.map((b) => b.n),
+      datasets: [{
+        data: dist,
+        backgroundColor: META.rubric.map((b) => lvlColor(b.n)),
+        borderColor: "#fff",
+        borderWidth: 2,
+      }],
+    },
+    options: { cutout: "56%", plugins: { legend: { position: "bottom" } } },
+  });
+  const axAvg = [1, 2, 3, 4].map((a) => {
+    const v = d.map((x) => x.axes?.[a]).filter((z) => z !== null && z !== undefined);
+    return v.length ? Math.round(v.reduce((s, z) => s + z, 0) / v.length * 10) / 10 : 0;
+  });
+  drawChart("rpAx", {
+    type: "bar",
+    data: {
+      labels: [1, 2, 3, 4].map((a) => META.axname[a]),
+      datasets: [{
+        label: "نسبة التنفيذ",
+        data: axAvg,
+        backgroundColor: [1, 2, 3, 4].map((a) => AXC[a]),
+        borderRadius: 6,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false } },
+      scales: { x: { min: 0, max: 100, ticks: { callback: (v) => v + "%" } } },
+    },
+  });
+}
+
 function dlCSV() {
   const rows = [[
     "الرمز",
@@ -1872,7 +2135,7 @@ function wireCentral(root, teamOf) {
 let TRS = [];
 async function rTransfers() {
   TRS = (await api("/api/transfers")).rows;
-  const canDecide = ME.role === "lead" || ME.role === "tech";
+  const canDecide = ME.role !== "eval";
   const st = { "معلّق": "var(--amber)", "معتمد": "var(--green)", "مرفوض": "var(--red)" };
   let h = `<h3 class="st">طلبات النقل</h3>
   <p class="sl">${
@@ -2057,6 +2320,12 @@ function openPw(force = false) {
 /* ── ربط الأحداث ── */
 function wire() {
   if (SEC === "assign" && ASG) wireAssign();
+  document.querySelectorAll("[data-mteam]").forEach((b) =>
+    b.onclick = () => {
+      MTEAM = b.dataset.mteam;
+      render();
+    }
+  );
   document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openEval(b.dataset.open));
   if ($("#mineAdd")) $("#mineAdd").onclick = openAdd;
   document.querySelectorAll("[data-move]").forEach((b) => b.onclick = () => openMove(b.dataset.move));
@@ -2205,6 +2474,7 @@ function wire() {
   const pr = $("#prBtn"), cs = $("#csvBtn");
   if (pr) pr.onclick = () => print();
   if (cs) cs.onclick = dlCSV;
+  if ($("#rpGen")) $("#rpGen").onclick = repGenerate;
 }
 $("#modal").onclick = (e) => {
   if (e.target.id === "modal") $("#modal").classList.remove("on");

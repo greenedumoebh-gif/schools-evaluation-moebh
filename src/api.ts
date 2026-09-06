@@ -208,6 +208,8 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         archiveYear: META.archiveYear,
         teamMeta: META.teamMeta,
         roleLabels: ROLE_LABELS,
+        issuers: META.issuers,
+        greenLead: META.greenLead,
         sectors: META.sectors,
         sizeRule: META.sizeRule,
         centralFields: META.centralFields,
@@ -747,6 +749,90 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     await setTransfer(t);
     await audit(acc.id, approve ? "اعتماد نقل" : "رفض نقل", t.instId, `${t.fromEval} ← ${t.toEval}`);
     return J({ ok: true, status: t.status });
+  }
+
+  // ── بيانات التقرير بثلاثة مستويات تفصيل ──
+  if (p === "/api/report") {
+    if (!can(acc, "reports")) return forbid("التقارير خارج صلاحيتك");
+    const team = url.searchParams.get("team") ?? "";
+    if (!META.teams.includes(team)) return J({ error: "فريق غير معروف" }, 400);
+    if (!ownsTeam(acc, team)) return forbid("هذا الفريق خارج نطاقك");
+    const level = url.searchParams.get("level") ?? "summary"; // summary · detailed · full
+    const year = url.searchParams.get("year") || await currentYear();
+    const [inst, evals, central, ov, picks, stories] = await Promise.all([
+      listInst(),
+      getEvals(year),
+      getCentral(year),
+      getTargets(stageOf(team)),
+      getPicks(team),
+      listStories(),
+    ]);
+    const ks = kpisOf(team) as Kpi[];
+    const rows = inst.filter((i) => i.team === team).map((i) => {
+      const e = evals[i.id];
+      const arch = e?.archived ? e : null;
+      const sc = arch ? null : scoreInst(i.team, i, e?.kpi ?? {}, ov, central[i.id]);
+      const pct = arch ? (arch.pct ?? null) : sc!.pct;
+      const base = {
+        id: i.id,
+        name: i.name,
+        stage: i.stage,
+        gender: i.gender,
+        size: i.size,
+        sector: i.sector,
+        evaluator: i.evaluator,
+        students: central[i.id]?.students ?? i.students,
+        status: e?.status ?? "لم يبدأ",
+        archived: !!arch,
+        basis: arch ? (arch.basis ?? "لوغاريتمية") : "خطية",
+        pct,
+        level: pct === null ? null : lvlOf(pct).n,
+        axes: arch ? arch.axes : sc!.axes,
+        notes: e?.notes ?? "",
+        story: e?.story ?? { on: false, text: "" },
+        prev: i.prev,
+      };
+      if (level === "summary" || arch) return base;
+      // التفصيلي: ملاحظات المؤشرات · الموسّع: المؤشرات وقيمها ونسبها
+      const kpiNotes = ks
+        .filter((k) => e?.kpi?.[String(k.n)]?.note)
+        .map((k) => ({ n: k.n, ax: k.ax, kpi: k.kpi, note: e!.kpi[String(k.n)].note }));
+      if (level === "detailed") return { ...base, kpiNotes };
+      return {
+        ...base,
+        kpiNotes,
+        kpis: ks.map((k) => {
+          const raw = e?.kpi?.[String(k.n)];
+          return {
+            n: k.n,
+            ax: k.ax,
+            kpi: applyText(k, ov).kpi,
+            mode: k.mode,
+            w: k.w,
+            tgt: effTarget(k, i.team, i, ov),
+            i: raw?.i ?? null,
+            j: raw?.j ?? null,
+            m: raw?.m ?? null,
+            note: raw?.note ?? "",
+            pct: sc!.kpiPct[String(k.n)],
+          };
+        }),
+      };
+    });
+    return J({
+      team,
+      year,
+      level,
+      issuer: META.issuers[team],
+      greenLead: META.greenLead,
+      teamMeta: META.teamMeta[team],
+      cap: capOf(team),
+      axw: axw(team),
+      picks,
+      stories: stories.filter((st) => st.team === team),
+      generatedBy: { id: acc.id, name: acc.name, title: acc.title },
+      rows,
+    });
   }
 
   // ── سجل المؤسسة عبر الدورات والأداء التراكمي ──

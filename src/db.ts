@@ -146,6 +146,17 @@ export const META = seed as unknown as {
   denomMap: Record<string, string>;
   centralFields: [string, string][];
   sectors: string[];
+  /** الجهة المُصدِرة والمعتمدون لكل فريق — كما اعتُمدت في أدوات التقارير السابقة */
+  issuers: Record<string, {
+    org: string;
+    managerTitle: string;
+    managerName: string;
+    underTitle: string;
+    underName: string;
+    dgTitle: string;
+    dgName: string;
+  }>;
+  greenLead: { title: string; name: string };
   yearColors: Record<string, string>;
   yearColorFallback: string;
   appName: string;
