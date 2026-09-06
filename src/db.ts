@@ -205,15 +205,20 @@ function initialPassword(): string {
  */
 export async function setupComplete(): Promise<boolean> {
   if (!_kv) return false;
-  const [seeded, schema, rev, arch] = await kv.getMany<[boolean, number, number, boolean]>([
+  const [seeded, schema, rev, arch, token] = await kv.getMany<
+    [boolean, number, number, boolean, string]
+  >([
     ["seeded"],
     ["eval_schema"],
     ["inst_rev"],
     ["archive_seeded"],
+    ["reset_token"],
   ]);
+  // SEED_RESET يبقى مضبوطاً في البيئة بعد تنفيذه، فالمقارنة مع الرمز المخزّن
+  // لا مع الفراغ؛ وإلا اعتُبرت التهيئة ناقصة في كل إقلاع.
+  const pending = (Deno.env.get("SEED_RESET") ?? "") !== (token.value ?? "");
   return !!seeded.value && (schema.value ?? 1) >= EVAL_SCHEMA &&
-    (rev.value ?? 0) >= META.instRev && !!arch.value &&
-    (Deno.env.get("SEED_RESET") ?? "") === "";
+    (rev.value ?? 0) >= META.instRev && !!arch.value && !pending;
 }
 
 export async function seedIfEmpty() {

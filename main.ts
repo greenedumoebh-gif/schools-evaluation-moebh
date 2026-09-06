@@ -12,17 +12,38 @@ const bootError: string | null = kvError;
  */
 let seedState: "idle" | "running" | "done" | "failed" = "idle";
 let seedError: string | null = null;
+let readyCheck: Promise<void> | null = null;
+
+/**
+ * كل عزل جديد على Deno Deploy يبدأ بحالة idle. لا يجوز إعلان «جارٍ التهيئة»
+ * قبل التأكد: نقرأ حالة التهيئة أولاً (قراءة واحدة لخمسة مفاتيح)، فإن كانت تامّة
+ * انتقلنا إلى done ولم يرَ المستخدم شيئاً. كان الإعلان يسبق القراءة، فيرى كل
+ * زائر أول في كل عزل صفحة انتظار بلا سبب.
+ */
+async function ensureReady() {
+  if (kvError || seedState === "done" || seedState === "failed") return;
+  if (!readyCheck) {
+    readyCheck = (async () => {
+      try {
+        if (await setupComplete()) {
+          seedState = "done";
+          return;
+        }
+      } catch (e) {
+        console.error("[تحذير] تعذّر فحص حالة التهيئة:", e);
+      }
+      startSeeding();
+    })();
+  }
+  await readyCheck;
+}
+
 function startSeeding() {
-  if (seedState !== "idle" || kvError) return;
+  if (seedState === "running" || seedState === "done" || kvError) return;
   seedState = "running";
   (async () => {
     const t0 = Date.now();
     try {
-      // كل عزل جديد يبدأ بحالة idle؛ قراءة واحدة تكفي لمعرفة أن العمل تمّ سابقاً
-      if (await setupComplete()) {
-        seedState = "done";
-        return;
-      }
       const res = await seedIfEmpty();
       if (res.seeded) console.log(`تهيئة أولى: ${res.accounts} حساباً · ${res.inst} مؤسسة`);
       console.log(`اكتملت التهيئة في ${((Date.now() - t0) / 1000).toFixed(1)} ثانية.`);
@@ -110,8 +131,8 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const secure = url.protocol === "https:";
 
-  // التهيئة تبدأ مع أول طلب أياً كان، بما فيه فحص الصحة
-  startSeeding();
+  // ننتظر فحص الحالة قبل أي قرار — قراءة واحدة سريعة لا تُقاس على تجربة المستخدم
+  await ensureReady();
 
   if (url.pathname === "/health") {
     return new Response(
