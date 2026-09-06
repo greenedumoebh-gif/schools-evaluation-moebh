@@ -13,7 +13,7 @@
   "fmt": {
     "lineWidth": 110,
     "semiColons": true,
-    "exclude": ["data", "README.md", "static/index.html", "static/vendor"]
+    "exclude": ["data", "README.md", "docs", "static/index.html", "static/vendor"]
   },
   "lint": {
     "exclude": ["static/vendor"],

@@ -125,6 +125,7 @@ export const META = seed as unknown as {
   appNameShort: string;
   version: string;
   released: string;
+  instRev: number;
   startYear: string;
   archiveYear: string;
 };
@@ -164,6 +165,7 @@ export async function seedIfEmpty() {
   if (!_kv) return { seeded: false, reset: false, error: _kvError };
   const done = await kv.get<boolean>(["seeded"]);
   await migrateEvalSchema();
+  await syncInstitutions();
   await seedArchiveCycle();
 
   // إعادة ضبط كلمات المرور: غيّر قيمة SEED_RESET في متغيرات البيئة لتنفيذها مرة واحدة.
@@ -249,6 +251,34 @@ export async function seedArchiveCycle() {
   await kv.set(["archive_seeded"], true);
   console.warn(`[استيراد] سُجّلت ${n} نتيجة للعام المؤرشف ${y} من الملفات المركزية.`);
   return { seeded: true, count: n };
+}
+
+/**
+ * مزامنة البيانات المرجعية للمؤسسات مع `seed.json` عند رفع `instRev`.
+ * تُحدَّث الحقول المرجعية فقط (الاسم والقطاع والمرحلة والجنس والأعداد والدورة
+ * المؤرشفة)، ويبقى **إسناد المقيّم** كما هو لأنه بيانات تشغيلية يديرها الفريق.
+ * بلا هذه المزامنة تظل قواعد البيانات القائمة على بيانات قديمة إلى الأبد.
+ */
+export async function syncInstitutions() {
+  const cur = (await kv.get<number>(["inst_rev"])).value ?? 0;
+  if (cur >= META.instRev) return { synced: false, count: 0 };
+  let n = 0;
+  for (const seedInst of META.inst as unknown as Inst[]) {
+    const live = (await kv.get<Inst>(["inst", seedInst.id])).value;
+    if (!live) {
+      await kv.set(["inst", seedInst.id], seedInst);
+      n++;
+      continue;
+    }
+    const next: Inst = { ...seedInst, evaluator: live.evaluator };
+    if (JSON.stringify(next) !== JSON.stringify(live)) {
+      await kv.set(["inst", seedInst.id], next);
+      n++;
+    }
+  }
+  await kv.set(["inst_rev"], META.instRev);
+  if (n) console.warn(`[مزامنة] حُدّثت بيانات ${n} مؤسسة إلى المراجعة ${META.instRev}.`);
+  return { synced: true, count: n };
 }
 
 export async function getAccount(id: string): Promise<Account | null> {

@@ -16,7 +16,7 @@
           </div>
           <h1>منصة تقييم المؤسسات التعليمية</h1>
           <p class="s">ضمن مبادرة التعليم الأخضر بمملكة البحرين</p>
-          <p class="s" style="margin-top:-6px">إدارة المنشآت التعليمية · <span id="lver">—</span></p>
+          <p class="s" style="margin-top:-6px">إدارة المنشآت التعليمية</p>
           <label for="uid">اسم الحساب</label>
           <input id="uid" name="username" autocomplete="username" placeholder="مثال: Z1-1" required>
           <label for="pwd">كلمة المرور</label>
@@ -29,6 +29,7 @@
     </p>
         </form>
         <p class="lfoot">مملكة البحرين · وزارة التربية والتعليم · إدارة المنشآت التعليمية</p>
+          <p class="lver" id="lver">الإصدار {{VERSION}}</p>
       </div>
     </div>
 
@@ -68,6 +69,7 @@
     </div>
 
     <script src="/vendor/chart.umd.js"></script>
+    <script src="/vendor/xlsx.full.min.js"></script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

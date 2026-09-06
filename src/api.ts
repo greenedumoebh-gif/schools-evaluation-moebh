@@ -230,7 +230,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
   }
 
   // ── المؤسسات ضمن النطاق ──
-  if (p === "/api/institutions") {
+  if (p === "/api/institutions" && req.method === "GET") {
     const year = url.searchParams.get("year") || await currentYear();
     const [inst, evals, tSchool, tKg] = await Promise.all([
       listInst(),
@@ -829,6 +829,113 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     await kv.set(["account", id], next);
     await audit(acc.id, "تعديل حساب", id, `${next.name} · ${next.team ?? "بلا فريق"}`);
     return J({ ok: true });
+  }
+
+  // ── إضافة مؤسسات: فردية أو دفعة من ملف إكسل يُقرأ في المتصفح ──
+  if (p === "/api/institutions" && req.method === "POST") {
+    if (!can(acc, "inst:write")) return forbid("إضافة المؤسسات خارج صلاحيتك");
+    const body = await req.json().catch(() => ({}));
+    const team = String(body.team ?? (acc.role === "lead" ? acc.team : ""));
+    if (!META.teams.includes(team)) return J({ error: "فريق غير معروف" }, 400);
+    if (acc.role === "lead" && team !== acc.team) return forbid("الإضافة داخل فريقك فقط");
+    const rows: Record<string, unknown>[] = Array.isArray(body.rows) ? body.rows : [];
+    if (!rows.length) return J({ error: "لا صفوف للإضافة" }, 400);
+    if (rows.length > 500) return J({ error: "دفعة أكبر من المسموح" }, 400);
+
+    const isKg = stageOf(team) === "kg";
+    const STAGES = ["ابتدائي", "إعدادي", "ثانوي", "رياض أطفال", "تعليم خاص"];
+    const GENDERS: Record<string, string> = {
+      "بنين": "بنين",
+      "بنات": "بنات",
+      "مشترك": "مختلط",
+      "مختلط": "مختلط",
+    };
+    const num = (v: unknown, label: string, i: number) => {
+      if (v === undefined || v === null || String(v).trim() === "") return null;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+        throw new Error(`الصف ${i + 1}: ${label} قيمة غير صالحة`);
+      }
+      return n;
+    };
+
+    const all = await listInst();
+    const code = META.teamMeta[team].code;
+    let next = all.filter((i) => i.team === team)
+      .reduce((m, i) => Math.max(m, Number(i.id.split("-")[1] ?? 0)), 0);
+    const existing = new Set(all.filter((i) => i.team === team).map((i) => i.name));
+    // توزيع المضاف على أقل المقيّمين حملاً، ويعيد القائد ترتيبه من شاشة التوزيع
+    const load: Record<string, number> = {};
+    const evs = (await listAccounts()).filter((a) => a.role === "eval" && a.team === team);
+    if (!evs.length) return J({ error: `لا مقيّمين في فريق ${team}` }, 400);
+    evs.forEach((e) => load[e.id] = all.filter((i) => i.evaluator === e.id).length);
+
+    const made: { inst: Inst; central: CentralData }[] = [];
+    try {
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const name = String(r.name ?? "").replace(/\s+/g, " ").trim();
+        if (!name) throw new Error(`الصف ${i + 1}: اسم المؤسسة مطلوب`);
+        if (name.length > 160) throw new Error(`الصف ${i + 1}: الاسم أطول من 160 حرفاً`);
+        if (existing.has(name)) throw new Error(`الصف ${i + 1}: «${name}» موجودة في الفريق`);
+        existing.add(name);
+
+        const rawStage = String(r.stage ?? "").replace(/\s+/g, " ").trim();
+        if (rawStage && !STAGES.includes(rawStage)) {
+          throw new Error(`الصف ${i + 1}: مرحلة غير معروفة «${rawStage}»`);
+        }
+        // «تعليم خاص» قطاع لا مرحلة، فيُقبل ولا يُخزَّن كمرحلة
+        let stage: string | null = rawStage === "تعليم خاص" ? null : (rawStage || null);
+        if (isKg) stage = "رياض أطفال";
+        else if (stage === "رياض أطفال") {
+          throw new Error(`الصف ${i + 1}: «رياض أطفال» لا تُضاف إلى ${team}`);
+        }
+
+        const rawG = String(r.gender ?? "").replace(/\s+/g, " ").trim();
+        if (rawG && !(rawG in GENDERS)) {
+          throw new Error(`الصف ${i + 1}: قيمة جنس غير معروفة «${rawG}»`);
+        }
+        const gender = rawG ? GENDERS[rawG] : null;
+
+        const students = num(r.students, "عدد الطلاب", i);
+        const teachers = num(r.teachers, "عدد المعلمين", i);
+        const subjects = num(r.subjects, "عدد المواد", i);
+
+        const owner = evs.map((e) => e.id).sort((a, b) => load[a] - load[b])[0];
+        load[owner]++;
+        next++;
+        made.push({
+          inst: {
+            id: `${code}-${String(next).padStart(3, "0")}`,
+            name,
+            inner: null,
+            team,
+            sector: META.teamMeta[team].sector,
+            stage,
+            stageTop: null,
+            gender,
+            students,
+            size: sizeOf(team, students),
+            prev: null,
+            evaluator: owner,
+          },
+          central: { students, teachers, subjects },
+        });
+      }
+    } catch (e) {
+      // لا تُكتب دفعة نصفها صحيح
+      return J({ error: (e as Error).message }, 400);
+    }
+
+    const year = await currentYear();
+    for (const m of made) {
+      await kv.set(["inst", m.inst.id], m.inst);
+      if (m.central.students !== null || m.central.teachers !== null || m.central.subjects !== null) {
+        await setCentral(year, m.inst.id, m.central);
+      }
+    }
+    await audit(acc.id, "إضافة مؤسسات", team, `${made.length} مؤسسة`);
+    return J({ ok: true, count: made.length, ids: made.map((m) => m.inst.id) });
   }
 
   // ── مقيّمو الفريق: قائمة خفيفة لا تكشف بيانات الحسابات ──

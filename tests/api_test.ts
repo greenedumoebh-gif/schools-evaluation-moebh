@@ -133,7 +133,7 @@ const leadOut = await call(lead2.sid, "/api/evaluation", "POST", {
 });
 chk(leadOut.status === 403, "رئيس فريق آخر لا يُدخل تقييماً (403)");
 const leadRows = (await (await call(lead1.sid, "/api/institutions")).json()).rows;
-chk(leadRows.length === 56, `رئيس الفريق يرى كل مؤسسات فريقه (${leadRows.length})`);
+chk(leadRows.length >= 56, `رئيس الفريق يرى كل مؤسسات فريقه (${leadRows.length})`);
 const clamp = await (await call(ev1.sid, "/api/evaluation", "POST", {
   instId: mine.id,
   kpi: rawFor(defs, 300),
@@ -153,7 +153,7 @@ await call(ev1.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: rawFor(de
 
 console.log("\n■ تصنيف المؤسسات مقابل الملفات المركزية");
 const all = (await (await call(tech.sid, "/api/institutions")).json()).rows;
-chk(all.length === 378, `العدد الكلي ${all.length}`);
+chk(all.length >= 378, `العدد الكلي ${all.length}`);
 const sizeRule = (n: number, kg: boolean): string =>
   kg
     ? (n <= 25
@@ -198,6 +198,23 @@ const stages = new Set(
 );
 chk(stages.has("ابتدائي - إعدادي") && stages.has("ثانوي (صناعي)"), "المراحل المركّبة محفوظة حرفياً");
 chk(!stages.has("متعدد المراحل"), "لا تسميات مجمَّعة من صنعنا");
+
+console.log("\n■ مزامنة بيانات المؤسسات ورقم الإصدار في الصفحة");
+const cdRows = (await (await call(tech.sid, "/api/central")).json()).rows;
+chk(cdRows.length === 378, `شاشة البيانات المركزية تغطي الجميع للفني (${cdRows.length})`);
+const noStageCd = cdRows.filter((r: { stage: string | null }) => !r.stage);
+chk(noStageCd.length === 0, `لا مؤسسة بلا مرحلة في شاشة البيانات (${noStageCd.length})`);
+chk(
+  cdRows.every((r: { sector: string }) => ["حكومية", "خاصة", "رياض أطفال"].includes(r.sector)),
+  "كل صف في شاشة البيانات يحمل قطاعه",
+);
+const idx = await (await fetch(`${BASE}/`)).text();
+const ver = (await (await call(tech.sid, "/api/me")).json()).meta.version;
+chk(!idx.includes("{{VERSION}}"), "العنصر البديل للإصدار مستبدَل في الصفحة");
+chk(
+  idx.includes(`الإصدار ${ver}`),
+  `رقم الإصدار مطبوع في شاشة الدخول قبل أي طلب لاحق (${ver})`,
+);
 
 console.log("\n■ قطاع المؤسسة");
 const bySector: Record<string, number> = {};
@@ -293,7 +310,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.7.0", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.8.0", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;
@@ -366,6 +383,125 @@ const forced = await (await call(ev1.sid, "/api/evaluation", "POST", {
 chk(
   forced.kpiPct["8"] === 50,
   `المقام المركزي 40 يحكم لا المُرسَل 1 → ${forced.kpiPct["8"]}% (16÷40=40% من هدف 80)`,
+);
+
+console.log("\n■ إضافة المؤسسات");
+chk(
+  (await call(ev1.sid, "/api/institutions", "POST", { rows: [{ name: "س" }] })).status === 403,
+  "المقيّم لا يضيف مؤسسات (403)",
+);
+const one = await (await call(lead1.sid, "/api/institutions", "POST", {
+  rows: [{
+    name: "مدرسة الاختبار الابتدائية للبنين",
+    stage: "ابتدائي",
+    gender: "بنين",
+    students: 420,
+    teachers: 24,
+    subjects: 9,
+  }],
+})).json();
+chk(one.ok && one.count === 1 && /^Z1-\d{3}$/.test(one.ids[0]), `إضافة مؤسسة واحدة (${one.ids[0]})`);
+const added = (await (await call(lead1.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === one.ids[0]);
+chk(
+  added.stage === "ابتدائي" && added.gender === "بنين" && added.sector === "حكومية",
+  "المرحلة والجنس محفوظان والقطاع مشتق من الفريق",
+);
+chk(
+  added.students === 420 && added.size === "المدرسة المتوسطة",
+  `الأعداد محفوظة والتصنيف مشتق (${added.size})`,
+);
+chk(added.central.teachers === 24 && added.central.subjects === 9, "المعلمون والمواد في بيانات العام");
+chk(
+  (await (await call(lead1.sid, "/api/kpis?inst=" + one.ids[0])).json()).kpis
+    .find((k: { n: number }) => k.n === 8).centralValue === 24,
+  "المؤسسة الجديدة تسحب مقامها المركزي فوراً",
+);
+// الخانات الفارغة تبقى فارغة
+const blank = await (await call(lead1.sid, "/api/institutions", "POST", {
+  rows: [{ name: "مدرسة بلا بيانات", stage: "", gender: "", students: "", teachers: "", subjects: "" }],
+})).json();
+const blankRow = (await (await call(lead1.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === blank.ids[0]);
+chk(
+  blankRow.stage === null && blankRow.gender === null && blankRow.students === null &&
+    blankRow.size === null && blankRow.central.teachers === null,
+  "الخانات الفارغة في الملف تبقى فارغة في المنصة",
+);
+// دفعة
+const bulkAdd = await (await call(lead1.sid, "/api/institutions", "POST", {
+  rows: [
+    { name: "دفعة أ", stage: "إعدادي", gender: "بنات", students: 800 },
+    { name: "دفعة ب", stage: "ثانوي", gender: "مشترك" },
+  ],
+})).json();
+chk(bulkAdd.count === 2, `إضافة دفعة (${bulkAdd.count})`);
+const bRows = (await (await call(lead1.sid, "/api/institutions")).json()).rows;
+chk(
+  bRows.find((r: { name: string }) => r.name === "دفعة ب").gender === "مختلط",
+  "«مشترك» تُخزَّن «مختلط» موحّدةً مع بيانات المصدر",
+);
+chk(
+  bRows.find((r: { name: string }) => r.name === "دفعة أ").size === "المدرسة الكبيرة",
+  "تصنيف الحجم مشتق لكل صف في الدفعة",
+);
+// رفض ما يجب رفضه، وبلا كتابة جزئية
+const nBefore = bRows.length;
+chk(
+  (await call(lead1.sid, "/api/institutions", "POST", { rows: [{ name: "دفعة أ" }] })).status === 400,
+  "اسم مكرر داخل الفريق يُرفض (400)",
+);
+chk(
+  (await call(lead1.sid, "/api/institutions", "POST", {
+    rows: [{ name: "س1", stage: "جامعي" }],
+  })).status === 400,
+  "مرحلة غير معروفة تُرفض (400)",
+);
+chk(
+  (await call(lead1.sid, "/api/institutions", "POST", {
+    rows: [{ name: "س2", gender: "أولاد" }],
+  })).status === 400,
+  "قيمة جنس غير معروفة تُرفض (400)",
+);
+chk(
+  (await call(lead1.sid, "/api/institutions", "POST", {
+    rows: [{ name: "س3", students: -5 }],
+  })).status === 400,
+  "عدد سالب يُرفض (400)",
+);
+chk(
+  (await call(lead1.sid, "/api/institutions", "POST", {
+    rows: [{ name: "س4", stage: "رياض أطفال" }],
+  })).status === 400,
+  "«رياض أطفال» لا تُضاف إلى منطقة تعليمية (400)",
+);
+chk(
+  (await call(lead1.sid, "/api/institutions", "POST", {
+    rows: [{ name: "صالح" }, { name: "دفعة أ" }],
+  })).status === 400,
+  "دفعة فيها صف خاطئ تُرفض كاملة (400)",
+);
+chk(
+  (await (await call(lead1.sid, "/api/institutions")).json()).rows.length === nBefore,
+  "لا كتابة جزئية من الدفعة المرفوضة",
+);
+chk(
+  (await call(lead1.sid, "/api/institutions", "POST", {
+    team: "منطقة 2",
+    rows: [{ name: "خارج الفريق" }],
+  })).status === 403,
+  "رئيس الفريق لا يضيف إلى فريق آخر (403)",
+);
+const kgAdd = await (await call(tech.sid, "/api/institutions", "POST", {
+  team: "رياض الأطفال",
+  rows: [{ name: "روضة الاختبار", stage: "", gender: "مشترك", students: 60 }],
+})).json();
+const kgRow = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === kgAdd.ids[0]);
+chk(
+  kgRow.stage === "رياض أطفال" && kgRow.sector === "رياض أطفال" &&
+    kgRow.size === "الروضة المتوسطة",
+  `الروضة الجديدة مرحلتها وقطاعها وتصنيفها صحيحة (${kgRow.size})`,
 );
 
 console.log("\n■ تبويبات التوزيع للحساب الفني");
@@ -613,7 +749,7 @@ chk(
 const vwLead = await (await call(tech.sid, "/api/view-as", "POST", { id: "Z1-L" })).json();
 chk(vwLead.viewing === "Z1-L", "معاينة حساب رئيس فريق");
 const leadView = (await (await call(tech.sid, "/api/institutions")).json()).rows;
-chk(leadView.length === 56, `نطاق رئيس الفريق أثناء معاينته (${leadView.length})`);
+chk(leadView.length >= 56, `نطاق رئيس الفريق أثناء معاينته (${leadView.length})`);
 await call(tech.sid, "/api/view-as", "POST", { id: null });
 const audV = (await (await call(tech.sid, "/api/audit")).json()).rows;
 chk(

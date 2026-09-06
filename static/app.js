@@ -52,11 +52,6 @@ async function api(path, opts = {}) {
 }
 
 /* ── الدخول ── */
-fetch("/health").then((r) => r.json()).then((j) => {
-  const el = $("#lver");
-  if (el && j.version) el.textContent = `الإصدار ${j.version}`;
-}).catch(() => {});
-
 $("#loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("#lerr").textContent = "";
@@ -1314,6 +1309,176 @@ async function cdRender(team) {
   wireCentral(box, () => CDTEAM);
 }
 
+/* ── إضافة المؤسسات: فردية ودفعة من ملف إكسل ── */
+const ADD_COLS = [
+  ["name", "اسم المدرسة"],
+  ["stage", "المرحلة"],
+  ["gender", "بنين/بنات/مشترك"],
+  ["students", "عدد الطلاب"],
+  ["teachers", "عدد المعلمين"],
+  ["subjects", "عدد المواد"],
+];
+const ADD_STAGES = ["ابتدائي", "إعدادي", "ثانوي", "رياض أطفال", "تعليم خاص"];
+const ADD_GENDERS = ["بنين", "بنات", "مشترك"];
+
+function addTeam() {
+  return ME.role === "lead" ? ME.team : (ASG?.team ?? META.teams[0]);
+}
+
+/** نموذج إكسل بأعمدة ثابتة وورقة تعليمات — يُبنى في المتصفح ولا يُرفع للخادم. */
+function addTemplate() {
+  const team = addTeam();
+  const head = ADD_COLS.map(([, t]) => t);
+  const sample = ["مدرسة نموذجية للبنين", "ابتدائي", "بنين", 420, 24, 9];
+  const ws = XLSX.utils.aoa_to_sheet([head, sample]);
+  ws["!cols"] = [{ wch: 34 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 12 }];
+  const notes = [
+    ["تعليمات تعبئة النموذج"],
+    [""],
+    ["1", "لا تغيّر أسماء الأعمدة ولا ترتيبها، والصف الأول عناوين."],
+    ["2", "اسم المدرسة إلزامي. أي خانة أخرى تُترك فارغة تبقى فارغة في المنصة."],
+    ["3", "المرحلة من: " + ADD_STAGES.join(" · ")],
+    ["4", "الجنس من: " + ADD_GENDERS.join(" · ") + " — و«مشترك» تُخزَّن «مختلط»."],
+    ["5", "الأعداد أرقام صحيحة موجبة، ومنها يُشتق تصنيف حجم المؤسسة."],
+    ["6", "الأعداد تخصّ العام الدراسي الجاري: " + META.currentYear],
+    ["7", "الفريق يُحدَّد من الشاشة لا من الملف، والقطاع يُشتق من الفريق."],
+    ["8", "الملف يُقرأ في المتصفح ولا يُخزَّن في المنصة."],
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(notes);
+  ws2["!cols"] = [{ wch: 6 }, { wch: 88 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "المؤسسات");
+  XLSX.utils.book_append_sheet(wb, ws2, "تعليمات");
+  XLSX.writeFile(wb, `نموذج_إضافة_مؤسسات_${team}.xlsx`);
+}
+
+/** قراءة الملف في المتصفح وتحويله صفوفاً — الملف نفسه لا يغادر الجهاز. */
+async function addParseFile(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const ws = wb.Sheets["المؤسسات"] ?? wb.Sheets[wb.SheetNames[0]];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: "" });
+  if (!aoa.length) throw new Error("الملف فارغ");
+  const head = aoa[0].map((c) => String(c).replace(/\s+/g, " ").trim());
+  const idx = ADD_COLS.map(([, t]) => head.indexOf(t));
+  const missing = ADD_COLS.filter((_, i) => idx[i] === -1).map(([, t]) => t);
+  if (missing.length) throw new Error("أعمدة ناقصة: " + missing.join(" · "));
+  const rows = [];
+  aoa.slice(1).forEach((r) => {
+    const o = {};
+    ADD_COLS.forEach(([k], i) => {
+      const v = r[idx[i]];
+      o[k] = v === undefined || v === null ? "" : String(v).trim();
+    });
+    if (o.name) rows.push(o);
+  });
+  if (!rows.length) throw new Error("لا صفوف فيها اسم مدرسة");
+  return rows;
+}
+
+function openAdd() {
+  const team = addTeam();
+  const tm = META.teamMeta[team];
+  const teamSel = ME.role === "lead"
+    ? `<div class="tgt" style="width:auto;padding:8px 12px">${esc(tm.tab)}</div>`
+    : `<select id="adTeam">` +
+      META.teams.map((t) =>
+        `<option value="${esc(t)}" ${t === team ? "selected" : ""}>${esc(META.teamMeta[t].tab)}</option>`
+      ).join("") + `</select>`;
+  $("#modalBody").innerHTML = `
+   <div class="mhead"><div>
+     <div style="font-size:12px;opacity:.85">إضافة مؤسسات</div>
+     <div style="font-size:16px;font-weight:800;margin-top:3px">مؤسسة واحدة أو دفعة من ملف إكسل</div></div>
+     <button class="btn" style="background:rgba(255,255,255,.2)" id="mClose">إغلاق</button></div>
+   <div class="mbody">
+     <div class="fld" style="margin-bottom:14px"><label>الفريق</label>${teamSel}</div>
+     <div class="tip">الرمز يُولَّد آلياً، والقطاع يُشتق من الفريق، والمؤسسة تُسند إلى أقل
+       المقيّمين حملاً ويمكن نقلها من شاشة التوزيع. الأعداد تخصّ العام الجاري
+       <b>${esc(META.currentYear)}</b>، وما يُترك فارغاً يبقى فارغاً.</div>
+
+     <h4 class="blk">مؤسسة واحدة</h4>
+     <div class="finputs" style="padding:0">
+       <div class="fld" style="flex:1 1 260px"><label>اسم المدرسة</label>
+         <input id="ad_name" style="width:100%" placeholder="إلزامي"></div>
+       <div class="fld"><label>المرحلة</label><select id="ad_stage"><option value="">—</option>` +
+    ADD_STAGES.map((x) => `<option>${x}</option>`).join("") + `</select></div>
+       <div class="fld"><label>الجنس</label><select id="ad_gender"><option value="">—</option>` +
+    ADD_GENDERS.map((x) => `<option>${x}</option>`).join("") + `</select></div>
+       <div class="fld"><label>عدد الطلاب</label>
+         <input id="ad_students" type="number" min="0" step="1" style="width:110px"></div>
+       <div class="fld"><label>عدد المعلمين</label>
+         <input id="ad_teachers" type="number" min="0" step="1" style="width:110px"></div>
+       <div class="fld"><label>عدد المواد</label>
+         <input id="ad_subjects" type="number" min="0" step="1" style="width:110px"></div>
+     </div>
+     <div style="margin-top:12px"><button class="btn" id="adOne">إضافة المؤسسة</button></div>
+
+     <h4 class="blk">دفعة من ملف إكسل</h4>
+     <p class="sl">نزّل النموذج، عبّئه، ثم ارفعه. الملف يُقرأ في متصفحك
+       <b>ولا يُخزَّن في المنصة</b> — تُستخرج منه البيانات فقط.</p>
+     <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+       <button class="btn ghost" id="adTpl">تنزيل النموذج</button>
+       <input type="file" id="adFile" accept=".xlsx,.xls" style="font-size:12px">
+     </div>
+     <div id="adPrev" style="margin-top:12px"></div>
+   </div>`;
+  $("#modal").classList.add("on");
+  $("#mClose").onclick = () => $("#modal").classList.remove("on");
+  $("#adTpl").onclick = addTemplate;
+
+  const teamNow = () => (ME.role === "lead" ? ME.team : $("#adTeam").value);
+  $("#adOne").onclick = async () => {
+    const row = {};
+    ADD_COLS.forEach(([k]) => row[k] = $("#ad_" + k).value.trim());
+    if (!row.name) return toast("اسم المدرسة مطلوب", true);
+    await addSend(teamNow(), [row]);
+  };
+
+  let pending = null;
+  $("#adFile").onchange = async () => {
+    const f = $("#adFile").files[0];
+    if (!f) return;
+    try {
+      pending = await addParseFile(f);
+    } catch (e) {
+      $("#adPrev").innerHTML = `<div class="tip red">${esc(e.message)}</div>`;
+      return;
+    }
+    const empt = pending.reduce(
+      (n, r) => n + ADD_COLS.filter(([k]) => k !== "name" && !r[k]).length,
+      0,
+    );
+    $("#adPrev").innerHTML = `<div class="tip">قُرئ <b>${pending.length}</b> صفاً من الملف` +
+      (empt ? ` · <b>${empt}</b> خانة فارغة ستبقى فارغة` : "") + `.</div>
+      <div class="tbl"><table><thead><tr>` +
+      ADD_COLS.map(([, t]) => `<th>${esc(t)}</th>`).join("") + `</tr></thead><tbody>` +
+      pending.slice(0, 8).map((r) =>
+        `<tr>` +
+        ADD_COLS.map(([k]) =>
+          `<td class="${k === "name" ? "r" : ""}">${
+            r[k] ? esc(r[k]) : '<span style="color:var(--muted)">—</span>'
+          }</td>`
+        ).join("") + `</tr>`
+      ).join("") +
+      `</tbody></table></div>` +
+      (pending.length > 8 ? `<p class="sl">معروض أول 8 صفوف من ${pending.length}.</p>` : "") +
+      `<div style="margin-top:10px"><button class="btn" id="adBulk">إضافة ${pending.length} مؤسسة</button></div>`;
+    $("#adBulk").onclick = () => addSend(teamNow(), pending);
+  };
+}
+
+async function addSend(team, rows) {
+  try {
+    const r = await api("/api/institutions", { method: "POST", body: { team, rows } });
+    $("#modal").classList.remove("on");
+    toast(`أُضيفت ${r.count} مؤسسة · ${r.ids.slice(0, 3).join(" · ")}${r.ids.length > 3 ? " …" : ""}`);
+    ASG = null;
+    await render();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
 /* ── توزيع المؤسسات على المقيّمين ── */
 let ASG = null; // { team, evals, rows, map, orig }
 
@@ -1353,6 +1518,7 @@ function asgHtml() {
   }</button>
     <button class="btn ghost" id="asgReset" ${pending ? "" : "disabled"}>تراجع</button>
     <button class="btn ghost" id="asgEven">اقتراح توزيع متوازن</button>
+    <button class="btn ghost" id="asgAdd">إضافة مؤسسات</button>
     <span class="asgnote${pending ? " on" : ""}">${
     pending ? `${pending} تغييراً غير محفوظ` : "لا تغييرات معلّقة"
   }</span>
@@ -1426,6 +1592,7 @@ function wireAssign() {
       asgRefresh();
     }
   );
+  $("#asgAdd").onclick = openAdd;
   $("#asgReset").onclick = () => {
     ASG.map = { ...ASG.orig };
     asgRefresh();
@@ -1482,9 +1649,13 @@ async function resetPasswords(all) {
 }
 
 /* ── البيانات المركزية للمؤسسات ── */
-async function rCentral() {
+let CDFILTER = null; // الفريق المعروض في شاشة بيانات المؤسسات
+async function rCentral(team) {
   const d = await api("/api/central?year=" + encodeURIComponent(VYEAR));
-  const rows = d.rows;
+  const teams = [...new Set(d.rows.map((r) => r.team))];
+  if (team !== undefined) CDFILTER = team;
+  if (CDFILTER && !teams.includes(CDFILTER)) CDFILTER = null;
+  const rows = CDFILTER ? d.rows.filter((r) => r.team === CDFILTER) : d.rows;
   const ro = !d.editable;
   const miss = rows.filter((r) => r.students === null || r.teachers === null || r.subjects === null);
   let h = `<h3 class="st">بيانات المؤسسات — ${esc(VYEAR)}</h3>
@@ -1494,22 +1665,36 @@ async function rCentral() {
     كل عام جديد يبدأ بخانات فارغة ويستلزم تحديثها، فالأعداد تتغيّر من عام لآخر
     ولا تُنقل تلقائياً.</div>
   ${ro ? `<div class="tip red">${esc(VYEAR)} ليس العام الجاري — عرض فقط.</div>` : ""}
+  ${
+    teams.length > 1
+      ? `<div class="asgtabs" id="cdFilter">
+      <button class="ytab${CDFILTER ? "" : " on"}" data-cdf-team="" style="--yc:var(--green-d)">
+        الكل<span class="ybadge">${d.rows.length}</span></button>` +
+        teams.map((t) =>
+          `<button class="ytab${t === CDFILTER ? " on" : ""}" data-cdf-team="${esc(t)}"
+          style="--yc:${AXC[(META.teamMeta[t].no % 4) + 1]}">${esc(META.teamMeta[t].tab)}
+          <span class="ybadge">${d.rows.filter((r) => r.team === t).length}</span></button>`
+        ).join("") + `</div>`
+      : ""
+  }
   <div class="kpis">
-    <div class="kpi"><div class="lbl">مؤسسات في نطاقك</div><div class="val">${rows.length}</div></div>
+    <div class="kpi"><div class="lbl">${CDFILTER ? "مؤسسات المعروض" : "مؤسسات في نطاقك"}</div>
+      <div class="val">${rows.length}</div></div>
     <div class="kpi ${miss.length ? "amber" : ""}"><div class="lbl">بيانات ناقصة</div>
       <div class="val">${miss.length}</div></div>
     <div class="kpi"><div class="lbl">مكتملة</div><div class="val">${rows.length - miss.length}</div></div>
   </div>
   <div class="tbl"><table><thead><tr><th style="width:70px">الرمز</th><th>المؤسسة</th>
-    <th style="width:120px">المرحلة</th>
-    <th style="width:110px">الطلبة</th><th style="width:110px">المعلمون</th>
-    <th style="width:110px">المواد</th><th style="width:150px">التصنيف المشتق</th></tr></thead><tbody>`;
+    <th style="width:92px">القطاع</th><th style="width:120px">المرحلة</th>
+    <th style="width:104px">الطلبة</th><th style="width:104px">المعلمون</th>
+    <th style="width:104px">المواد</th><th style="width:150px">التصنيف المشتق</th></tr></thead><tbody>`;
   rows.forEach((r) => {
     const f = (k) =>
       `<input type="number" min="0" step="1" style="width:92px" data-cdi="${r.id}" data-cdf="${k}"
         value="${r[k] ?? ""}" ${ro ? "disabled" : ""}>`;
     h += `<tr><td class="mono">${r.id}</td><td class="r">${esc(r.name)}</td>
-      <td>${esc(r.stage ?? "—")}</td>
+      <td><span class="pill ${SECP[r.sector] ?? ""}">${esc(r.sector)}</span></td>
+      <td>${esc(r.stage ?? "غير مسجَّل")}</td>
       <td>${f("students")}</td><td>${f("teachers")}</td><td>${f("subjects")}</td>
       <td id="cds${r.id}">${
       r.size
@@ -1522,7 +1707,18 @@ async function rCentral() {
     h += `<div style="display:flex;gap:9px;margin-top:12px">
       <button class="btn" id="cdSaveAll">حفظ البيانات</button></div>`;
   }
-  setTimeout(() => wireCentral(document), 0);
+  setTimeout(() => {
+    wireCentral(document);
+    document.querySelectorAll("[data-cdf-team]").forEach((b) =>
+      b.onclick = async () => {
+        $("#content").innerHTML =
+          `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
+        $("#content").innerHTML = await rCentral(b.dataset.cdfTeam || null);
+        wireCentral(document);
+        document.querySelectorAll("[data-cdf-team]").forEach((x) => x.onclick = b.onclick);
+      }
+    );
+  }, 0);
   return h;
 }
 

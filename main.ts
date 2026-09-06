@@ -66,6 +66,14 @@ async function serveStatic(path: string): Promise<Response | null> {
   const clean = path.replace(/\.\./g, "").replace(/^\/+/, "");
   const file = clean === "" ? "index.html" : clean;
   try {
+    // رقم الإصدار يُحقن في الصفحة عند التقديم فيظهر في شاشة الدخول دائماً،
+    // ولا يعتمد على نجاح أي طلب لاحق من المتصفح.
+    if (file === "index.html") {
+      const html = await Deno.readTextFile(new URL("./static/index.html", import.meta.url));
+      return new Response(html.replaceAll("{{VERSION}}", META.version), {
+        headers: { "content-type": MIME[".html"], ...SEC_HEADERS },
+      });
+    }
     const data = await Deno.readFile(new URL(`./static/${file}`, import.meta.url));
     const ext = file.slice(file.lastIndexOf("."));
     return new Response(data, {
