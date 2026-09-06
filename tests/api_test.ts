@@ -199,6 +199,44 @@ const stages = new Set(
 chk(stages.has("ابتدائي - إعدادي") && stages.has("ثانوي (صناعي)"), "المراحل المركّبة محفوظة حرفياً");
 chk(!stages.has("متعدد المراحل"), "لا تسميات مجمَّعة من صنعنا");
 
+console.log("\n■ قطاع المؤسسة");
+const bySector: Record<string, number> = {};
+for (const r of all) bySector[r.sector] = (bySector[r.sector] ?? 0) + 1;
+chk(
+  bySector["رياض أطفال"] === 152 && bySector["خاصة"] === 16 && bySector["حكومية"] === 210,
+  `توزيع القطاعات: ${Object.entries(bySector).map(([k, v]) => `${k} ${v}`).join(" · ")}`,
+);
+chk(
+  all.filter((r: { team: string }) => r.team === "رياض الأطفال")
+    .every((r: { sector: string; stage: string }) => r.sector === "رياض أطفال" && r.stage === "رياض أطفال"),
+  "كل مؤسسات حسابات KG رياض أطفال قطاعاً ومرحلةً",
+);
+chk(
+  all.filter((r: { team: string }) => r.team === "التعليم الخاص")
+    .every((r: { sector: string }) => r.sector === "خاصة"),
+  "كل مؤسسات حسابات PR مدارس خاصة",
+);
+chk(
+  all.filter((r: { teamCode: string }) => ["Z1", "Z2", "Z3", "Z4"].includes(r.teamCode))
+    .every((r: { sector: string }) => r.sector === "حكومية"),
+  "مؤسسات المناطق الأربع حكومية",
+);
+chk(
+  all.filter((r: { sector: string }) => r.sector === "خاصة")
+    .every((r: { stage: string }) => r.stage !== "رياض أطفال"),
+  "المدارس الخاصة تحتفظ بمراحلها الفعلية ولا تُخلط برياض الأطفال",
+);
+const kgOne = await (await call(tech.sid, "/api/kpis?inst=KG-001")).json();
+const prOne = await (await call(tech.sid, "/api/kpis?inst=PR-001")).json();
+chk(
+  kgOne.kpis.length === 25 && kgOne.cap === 4500,
+  `رياض الأطفال على 25 مؤشراً وسقف 4,500 (${kgOne.kpis.length})`,
+);
+chk(
+  prOne.kpis.length === 31 && prOne.cap === 5400,
+  `المدارس الخاصة على 31 مؤشراً وسقف 5,400 (${prOne.kpis.length})`,
+);
+
 console.log("\n■ المؤشر 20 حسب المرحلة");
 async function t20(id: string, sid: string) {
   const d = await (await call(sid, "/api/kpis?inst=" + id)).json();
@@ -255,7 +293,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.5.0", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.7.0", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;
@@ -329,6 +367,36 @@ chk(
   forced.kpiPct["8"] === 50,
   `المقام المركزي 40 يحكم لا المُرسَل 1 → ${forced.kpiPct["8"]}% (16÷40=40% من هدف 80)`,
 );
+
+console.log("\n■ تبويبات التوزيع للحساب الفني");
+const tabsMeta = (await (await call(tech.sid, "/api/me")).json()).meta.teamMeta;
+const expected = [
+  "مؤسسات تعليمية حكومية — المنطقة التعليمية 1",
+  "مؤسسات تعليمية حكومية — المنطقة التعليمية 2",
+  "مؤسسات تعليمية حكومية — المنطقة التعليمية 3",
+  "مؤسسات تعليمية حكومية — المنطقة التعليمية 4",
+  "مؤسسات تعليمية خاصة",
+  "رياض الأطفال",
+];
+chk(
+  ["منطقة 1", "منطقة 2", "منطقة 3", "منطقة 4", "التعليم الخاص", "رياض الأطفال"]
+    .every((t, i) => tabsMeta[t].tab === expected[i]),
+  "مسميات التبويبات الستة كما اعتُمدت",
+);
+for (const [t, n] of [["منطقة 3", 53], ["التعليم الخاص", 16], ["رياض الأطفال", 152]] as const) {
+  const ev = (await (await call(tech.sid, "/api/evaluators?team=" + encodeURIComponent(t))).json())
+    .rows;
+  chk(ev.length === 5, `${t}: خمسة مقيّمين لعرضهم كأعمدة (${ev.length})`);
+  const cnt = all.filter((r: { team: string }) => r.team === t).length;
+  chk(cnt === n, `${t}: ${cnt} مؤسسة في التبويب`);
+}
+const techMove = await (await call(tech.sid, "/api/assign-bulk", "POST", {
+  items: [{ instId: "KG-001", evaluator: "KG-3" }],
+})).json();
+chk(techMove.ok && techMove.count === 1, "الحساب الفني يوزّع في أي فريق");
+await call(tech.sid, "/api/assign-bulk", "POST", {
+  items: [{ instId: "KG-001", evaluator: "KG-1" }],
+});
 
 console.log("\n■ توزيع المؤسسات على المقيّمين");
 chk(

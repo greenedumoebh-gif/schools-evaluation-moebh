@@ -36,6 +36,8 @@ export interface Inst {
   /** الاسم داخل استمارة التقييم كما ورد في الملف المركزي — قد يختلف عن اسم المجلد */
   inner: string | null;
   team: string;
+  /** قطاع المؤسسة: حكومية · خاصة · رياض أطفال — مشتق من فريق التقييم */
+  sector: string;
   /** المرحلة كما وردت حرفياً في الملف المركزي، وnull إذا كانت غائبة عنه */
   stage: string | null;
   gender: string | null;
@@ -110,9 +112,13 @@ export const META = seed as unknown as {
   // deno-lint-ignore no-explicit-any
   kpi: Record<string, any[]>;
   sizeRule: Record<string, [string, number, number | null][]>;
-  teamMeta: Record<string, { code: string; no: number; kind: string; label: string }>;
+  teamMeta: Record<
+    string,
+    { code: string; no: number; kind: string; label: string; sector: string; tab: string }
+  >;
   denomMap: Record<string, string>;
   centralFields: [string, string][];
+  sectors: string[];
   yearColors: Record<string, string>;
   yearColorFallback: string;
   appName: string;

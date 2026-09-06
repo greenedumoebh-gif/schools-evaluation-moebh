@@ -286,12 +286,14 @@ function rMine() {
   }</div></div>
   </div>
   <div class="tbl"><table><thead><tr><th style="width:78px">الرمز</th><th>المؤسسة</th>
+   <th style="width:96px">القطاع</th>
    <th style="width:120px">المرحلة</th><th style="width:70px">الجنس</th><th style="width:62px">الطلبة</th>
    <th style="width:110px">التصنيف</th>${ME.role === "lead" ? '<th style="width:80px">المقيّم</th>' : ""}
    <th style="width:105px">الحالة</th><th style="width:72px">النتيجة</th><th style="width:115px">التقدير</th>
    <th style="width:80px"></th></tr></thead><tbody>` +
     ROWS.map((x) =>
       `<tr><td class="mono">${x.id}</td><td class="r">${esc(x.name)}</td>
+      <td><span class="pill ${SECP[x.sector] ?? ""}">${esc(x.sector)}</span></td>
       <td>${esc(x.stage ?? "غير مسجَّل")}</td><td>${esc(x.gender ?? "غير مسجَّل")}</td>
       <td>${x.students ?? "—"}</td><td>${esc(x.size ?? "—")}</td>
       <td><span class="pill" style="background:${SC[x.status]}22;color:${
@@ -313,6 +315,7 @@ function rMine() {
 }
 
 /* ── شاشة إدخال التقييم — المؤشرات التفصيلية ── */
+const SECP = { "حكومية": "blue", "خاصة": "amber", "رياض أطفال": "purple" };
 const MODEP = { "نسبة": "blue", "عدد": "amber", "وصفي": "purple" };
 let EV = null; // { inst, defs, raw }
 
@@ -333,9 +336,11 @@ async function openEval(id) {
   const tuned = K.kpis.filter((k) => k.tgtEff !== k.tgtBase).map((k) => k.n);
 
   let h = `<div class="mhead"><div>
-     <div style="font-size:12px;opacity:.85">${x.id} · ${esc(x.team)} · ${esc(x.stage ?? "مرحلة غير مسجَّلة")}${
-    x.stageTop ? " ← " + esc(x.stageTop) : ""
-  } · ${esc(x.gender ?? "جنس غير مسجَّل")}${x.size ? " · " + esc(x.size) : ""}</div>
+     <div style="font-size:12px;opacity:.85">${x.id} · ${esc(x.sector)} · ${esc(x.team)} · ${
+    esc(x.stage ?? "مرحلة غير مسجَّلة")
+  }${x.stageTop ? " ← " + esc(x.stageTop) : ""} · ${esc(x.gender ?? "جنس غير مسجَّل")}${
+    x.size ? " · " + esc(x.size) : ""
+  }</div>
      <div style="font-size:16px;font-weight:800;margin-top:3px">${esc(x.name)}</div></div>
      <button class="btn" style="background:rgba(255,255,255,.2)" id="mClose">إغلاق</button></div>
    <div class="mbody">
@@ -783,6 +788,7 @@ function rStats() {
     ).join("") + `</div></div>
   <h4 class="blk">حسب المرحلة</h4>${statTable(ROWS, "المرحلة", "stage")}
   <h4 class="blk">حسب الجنس</h4>${statTable(ROWS, "الجنس", "gender")}
+  <h4 class="blk">حسب القطاع</h4>${statTable(ROWS, "القطاع", "sector")}
   <h4 class="blk">حسب تصنيف الحجم</h4>${statTable(ROWS, "التصنيف", "size")}`;
   if (ME.role === "tech") h += `<h4 class="blk">حسب الفريق</h4>${statTable(ROWS, "الفريق", "team")}`;
   h += `<h4 class="blk">نسب التقدم على المحاور</h4><div class="tbl"><table>
@@ -992,6 +998,7 @@ function dlCSV() {
     "الرمز",
     "المؤسسة",
     "الفريق",
+    "القطاع",
     "المرحلة",
     "الجنس",
     "الطلبة",
@@ -1006,6 +1013,7 @@ function dlCSV() {
       x.id,
       x.name,
       x.team,
+      x.sector,
       x.stage ?? "",
       x.gender ?? "",
       x.students ?? "",
@@ -1132,8 +1140,9 @@ async function rTech() {
     <button class="btn ghost" id="tgSchool">التعليم النظامي</button>
     <button class="btn ghost" id="tgKg">التعليم المبكر</button></div>
   <div id="tgBox"></div>
-  <h4 class="blk">إسناد المؤسسات</h4>
-  <p class="sl">اختر الفريق لعرض مؤسساته، ثم غيّر الفريق أو المقيّم لأي مؤسسة.
+  <h4 class="blk">نقل المؤسسات بين الفرق</h4>
+  <p class="sl">هذا الجدول لنقل مؤسسة من فريق إلى آخر فقط. أما توزيع مؤسسات الفريق
+    على مقيّميه فمن شاشة <b>توزيع المؤسسات</b> بالسحب والإفلات.<br>
     نقل مؤسسة بين النظامي ورياض الأطفال يغيّر عدد المؤشرات والسقف، فيُحذف تقييمها وقصتها عند النقل.</p>
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap" id="asTabs">` +
     META.teams.map((t) => `<button class="btn ghost" data-as="${esc(t)}">${esc(t)}</button>`).join("") +
@@ -1308,16 +1317,25 @@ async function cdRender(team) {
 /* ── توزيع المؤسسات على المقيّمين ── */
 let ASG = null; // { team, evals, rows, map, orig }
 
-async function rAssign() {
-  const team = ME.role === "lead" ? ME.team : (ASG?.team ?? META.teams[0]);
-  const evals = (await api("/api/evaluators?team=" + encodeURIComponent(team))).rows
-    .map((a) => a.id);
-  const rows = ROWS.filter((r) => r.team === team);
+async function rAssign(team) {
+  const t = ME.role === "lead" ? ME.team : (team ?? ASG?.team ?? META.teams[0]);
+  const evals = (await api("/api/evaluators?team=" + encodeURIComponent(t))).rows.map((a) => a.id);
+  const rows = ROWS.filter((r) => r.team === t);
   const map = {};
   rows.forEach((r) => map[r.id] = r.evaluator);
-  ASG = { team, evals, rows, map, orig: { ...map } };
+  ASG = { team: t, evals, rows, map, orig: { ...map } };
   setTimeout(wireAssign, 0);
   return asgHtml();
+}
+/** تبويب لكل فريق — يظهر للحساب الفني وحده لأن رئيس الفريق مقصور على فريقه. */
+function asgTabs() {
+  if (ME.role === "lead") return "";
+  return `<div class="asgtabs">` +
+    META.teams.map((t) =>
+      `<button class="ytab${t === ASG.team ? " on" : ""}" data-asg="${esc(t)}"
+        style="--yc:${AXC[(META.teamMeta[t].no % 4) + 1]}">${esc(META.teamMeta[t].tab)}
+        <span class="ybadge">${META.teamMeta[t].code}</span></button>`
+    ).join("") + `</div>`;
 }
 
 function asgHtml() {
@@ -1325,7 +1343,8 @@ function asgHtml() {
   const pending = rows.filter((r) => map[r.id] !== orig[r.id]).length;
   const tm = META.teamMeta[ASG.team];
   let h = `<h3 class="st">توزيع المؤسسات على المقيّمين</h3>
-  <p class="sl">${esc(tm.label)} · رمز ${tm.code} — ${rows.length} مؤسسة على ${evals.length} مقيّمين.
+  ${asgTabs()}
+  <p class="sl">${esc(tm.tab)} · رمز ${tm.code} — ${rows.length} مؤسسة على ${evals.length} مقيّمين.
     اسحب بطاقة المؤسسة إلى عمود المقيّم، أو غيّر المقيّم من القائمة داخل البطاقة.
     لا يُحفظ شيء قبل الضغط على «حفظ التوزيع».</p>
   <div class="asgbar">
@@ -1368,6 +1387,13 @@ function asgRefresh() {
 
 function wireAssign() {
   if (!ASG || SEC !== "assign") return;
+  document.querySelectorAll("[data-asg]").forEach((b) =>
+    b.onclick = async () => {
+      $("#content").innerHTML =
+        `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
+      $("#content").innerHTML = await rAssign(b.dataset.asg);
+    }
+  );
   let dragId = null;
   document.querySelectorAll(".asgcard").forEach((c) => {
     c.ondragstart = (e) => {

@@ -1140,3 +1140,15 @@ h3.st::before {
   font-size: 11.5px;
   padding: 4px 7px;
 }
+
+/* ── تبويبات فرق التوزيع ── */
+.asgtabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 13px;
+}
+.asgtabs .ytab {
+  font-size: 12px;
+  padding: 7px 13px;
+}

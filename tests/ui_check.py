@@ -78,6 +78,11 @@ with sync_playwright() as p:
     chk(pg.locator("[data-open]").count() > 0, f"جدول مؤسساتي ({pg.locator('[data-open]').count()} مؤسسة)")
     hdr = pg.locator("#content table thead th").all_inner_texts()
     chk("التصنيف" in hdr, f"عمود تصنيف الحجم في جدول مؤسساتي ({' · '.join(hdr[:6])})")
+    chk("القطاع" in hdr, "عمود القطاع في جدول المؤسسات")
+    chk(
+        "حكومية" in pg.locator("#content tbody").inner_text(),
+        "مؤسسات المنطقة موسومة «حكومية»",
+    )
     row1 = pg.locator("#content tbody tr").first.inner_text()
     chk("المدرسة " in row1, f"تصنيف الحجم معروض في الصف الأول")
     chk(pg.evaluate("getComputedStyle(document.documentElement).direction") == "rtl", "اتجاه الصفحة RTL")
@@ -310,6 +315,32 @@ with sync_playwright() as p:
     chk("معهد ديني ← ثانوي" in head, f"الترويسة تعرض النص الأصلي وقرار الفريق")
     kgrow = pg4.locator("#content tbody tr").first.inner_text()
     chk("رياض أطفال" in kgrow, "روضة: المرحلة «رياض أطفال» لا «غير مسجَّل»")
+    kgall = pg4.evaluate(
+        "()=>[...document.querySelectorAll('#content tbody tr')]"
+        ".every(r=>r.innerText.includes('رياض أطفال'))"
+    )
+    chk(kgall, "كل مؤسسات حساب KG موسومة رياض أطفال")
+
+    # ── التعليم الخاص ──
+    pg7 = br.new_page(viewport={"width": 1440, "height": 950})
+    pg7.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
+    pg7.on("pageerror", lambda e: errs.append(str(e)))
+    login(pg7, "PR-1")
+    pg7.wait_for_selector("#content tbody tr", timeout=15000)
+    prall = pg7.evaluate(
+        "()=>[...document.querySelectorAll('#content tbody tr')]"
+        ".every(r=>r.innerText.includes('خاصة'))"
+    )
+    chk(prall, "كل مؤسسات حساب PR موسومة «خاصة»")
+    chk(
+        "رياض أطفال" not in pg7.locator("#content tbody").inner_text(),
+        "المدارس الخاصة لا تظهر كرياض أطفال",
+    )
+    pg7.locator("[data-open]").first.click()
+    pg7.wait_for_selector(".axbox", timeout=15000)
+    chk(pg7.locator(".frow").count() == 31, f"مدرسة خاصة على 31 مؤشراً ({pg7.locator('.frow').count()})")
+    chk("خاصة" in pg7.locator(".mhead").inner_text(), "القطاع في ترويسة شاشة التقييم")
+    pg7.evaluate("()=>document.getElementById('modal').classList.remove('on')")
     chk("4,500" in pg4.locator("#evSum").inner_text(), "روضة: السقف 4,500 في جدول النتيجة")
 
     # ── رئيس الفريق: كل مؤسسات فريقه وإدخال التقييم ──
@@ -483,6 +514,33 @@ with sync_playwright() as p:
     tnav = pg2.evaluate("()=>[...document.querySelectorAll('#nav a')].map(a=>a.dataset.s)")
     chk("tech" in tnav, f"الحساب الفني استعاد شاشاته ({' · '.join(tnav)})")
 
+    # ── لوحة التوزيع للحساب الفني بتبويبات الفرق ──
+    pg2.locator('#nav a[data-s="assign"]').click()
+    pg2.wait_for_selector(".asgtabs .ytab", timeout=20000)
+    tabs2 = pg2.locator(".asgtabs .ytab").all_inner_texts()
+    chk(len(tabs2) == 6, f"ستة تبويبات للحساب الفني ({len(tabs2)})")
+    joined = " | ".join(t.replace("\n", " ") for t in tabs2)
+    chk(
+        "مؤسسات تعليمية حكومية — المنطقة التعليمية 1" in joined
+        and "مؤسسات تعليمية خاصة" in joined
+        and "رياض الأطفال" in joined,
+        f"مسميات التبويبات كما اعتُمدت ({joined[:60]}…)",
+    )
+    chk(pg2.locator(".asgcol").count() == 5, "أعمدة مقيّمي المنطقة الأولى")
+    chk(pg2.locator(".asgcard").count() == 56, "بطاقات المنطقة الأولى")
+    pg2.locator('.asgtabs [data-asg="رياض الأطفال"]').click()
+    pg2.wait_for_timeout(2500)
+    chk(
+        pg2.locator(".asgcard").count() == 152,
+        f"التبويب ينقل إلى مؤسسات رياض الأطفال ({pg2.locator('.asgcard').count()})",
+    )
+    chk(pg2.locator(".asgcol").count() == 5, "أعمدة مقيّمي رياض الأطفال")
+    pg2.locator('.asgtabs [data-asg="التعليم الخاص"]').click()
+    pg2.wait_for_timeout(2000)
+    chk(pg2.locator(".asgcard").count() == 16, "تبويب التعليم الخاص 16 مؤسسة")
+    pg2.locator('#nav a[data-s="tech"]').click()
+    pg2.wait_for_selector("#asBox table", timeout=25000)
+
     # ── إدارة الحسابات والإسناد ──
     chk(pg2.locator("[data-acsave]").count() == 37, f"زر حفظ لكل حساب ({pg2.locator('[data-acsave]').count()})")
     chk(pg2.locator("[data-rn]").count() == 37, "خانة اسم المستخدم قابلة للتعديل لكل حساب")
@@ -580,7 +638,7 @@ with sync_playwright() as p:
     chk(dis, "خانات الإدخال معطَّلة في عام غير جارٍ")
     pg.click("#mClose")
 
-    body = pg.locator("body").inner_text() + pg2.locator("body").inner_text() + pg3.locator("body").inner_text() + pg4.locator("body").inner_text() + pg5.locator("body").inner_text() + pg6.locator("body").inner_text()
+    body = pg.locator("body").inner_text() + pg2.locator("body").inner_text() + pg3.locator("body").inner_text() + pg4.locator("body").inner_text() + pg5.locator("body").inner_text() + pg6.locator("body").inner_text() + pg7.locator("body").inner_text()
     chk("undefined" not in body and "NaN" not in body, "لا يوجد undefined/NaN في الصفحات")
     chk(len(errs) == 0, f"أخطاء الكونسول: {len(errs)} {errs[:3]}")
     br.close()
