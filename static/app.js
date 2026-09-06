@@ -20,6 +20,7 @@ function yearColor(y) {
 }
 let ME = null, META = null, PERMS = [], SEC = null, ROWS = [], TOP = null;
 let TGT = null, TGSTAGE = "school", VYEAR = null, EDITABLE = true, ARCHIVED = false;
+const EVNAMES = {};
 const TGDEFS = {};
 
 const fmt = (n, d = 0) =>
@@ -163,13 +164,27 @@ function buildNav() {
     a.onclick = async () => {
       SEC = a.dataset.s;
       buildNav();
-      $("#sb").classList.remove("open");
-      scrollTo(0, 0);
+      toggleNav(false);
+      globalThis.scrollTo(0, 0);
       await render();
     }
   );
 }
-$("#mbtn").onclick = () => $("#sb").classList.toggle("open");
+/** فتح الشريط الجانبي على الجوال مع طبقة معتمة تُغلقه بلمسة خارجه. */
+function toggleNav(open) {
+  const sb = $("#sb");
+  const on = open === undefined ? !sb.classList.contains("open") : open;
+  sb.classList.toggle("open", on);
+  let sc = document.getElementById("scrim");
+  if (on && !sc) {
+    sc = document.createElement("div");
+    sc.id = "scrim";
+    sc.className = "scrim";
+    sc.onclick = () => toggleNav(false);
+    document.body.appendChild(sc);
+  } else if (!on && sc) sc.remove();
+}
+$("#mbtn").onclick = () => toggleNav();
 
 /* ── التحميل والرسم ── */
 async function render() {
@@ -184,6 +199,11 @@ async function render() {
       ROWS = d.rows;
       EDITABLE = d.editable;
       ARCHIVED = d.archived;
+      if (ME.role !== "eval" && !Object.keys(EVNAMES).length) {
+        try {
+          (await api("/api/evaluators")).rows.forEach((a) => EVNAMES[a.id] = a);
+        } catch { /* الأسماء تحسين للعرض، وغيابها لا يمنع الشاشة */ }
+      }
       const note = $("#ynote");
       if (note) {
         note.textContent = ARCHIVED
@@ -323,7 +343,13 @@ function rMine() {
       <td><span class="pill" style="background:${SC[x.status]}22;color:${
         SC[x.status]
       }">${x.status}</span></td>
-${ME.role === "eval" ? "" : `<td class="mono">${esc(x.evaluator)}</td>`}
+${
+        ME.role === "eval"
+          ? ""
+          : `<td class="mono">${esc(x.evaluator)}${
+            EVNAMES[x.evaluator] ? `<div class="ogl">${esc(EVNAMES[x.evaluator].name)}</div>` : ""
+          }</td>`
+      }
       <td><b>${x.pct !== null ? x.pct + "%" : "—"}</b></td>
       <td>${
         x.level
@@ -351,31 +377,38 @@ const SECP = { "حكومية": "blue", "خاصة": "amber", "رياض أطفال
 const MODEP = { "نسبة": "blue", "عدد": "amber", "وصفي": "purple" };
 let EV = null; // { inst, defs, raw }
 
+/**
+ * شاشة التقييم صفحة كاملة لا نافذة منبثقة: المؤشرات 31/25 مع ملاحظاتها
+ * أطول من أن تُقرأ في نافذة، وعلى الجوال كانت النافذة تحجب الشاشة كلها.
+ */
+let EVBACK = null;
 async function openEval(id) {
   const x = ROWS.find((r) => r.id === id);
-  $("#modalBody").innerHTML =
-    `<div class="mbody" style="text-align:center;color:var(--muted)">جارٍ تحميل المؤشرات…</div>`;
-  $("#modal").classList.add("on");
+  EVBACK = SEC;
+  $("#modal").classList.remove("on");
+  $("#content").innerHTML =
+    `<div class="card" style="text-align:center;color:var(--muted)">جارٍ تحميل المؤشرات…</div>`;
+  globalThis.scrollTo(0, 0);
   let K;
   try {
     K = await api("/api/kpis?inst=" + encodeURIComponent(id));
   } catch (e) {
-    $("#modalBody").innerHTML = `<div class="mbody"><div class="tip red">${esc(e.message)}</div></div>`;
+    $("#content").innerHTML = `<div class="tip red">${esc(e.message)}</div>`;
     return;
   }
   EV = { inst: x, defs: K, raw: JSON.parse(JSON.stringify(x.kpi || {})) };
   const assumed = K.kpis.filter((k) => k.assumed).map((k) => k.n);
   const tuned = K.kpis.filter((k) => k.tgtEff !== k.tgtBase).map((k) => k.n);
 
-  let h = `<div class="mhead"><div>
+  let h = `<div class="evhead"><div>
      <div style="font-size:12px;opacity:.85">${x.id} · ${esc(x.sector)} · ${esc(x.team)} · ${
     esc(x.stage ?? "مرحلة غير مسجَّلة")
   }${x.stageTop ? " ← " + esc(x.stageTop) : ""} · ${esc(x.gender ?? "جنس غير مسجَّل")}${
     x.size ? " · " + esc(x.size) : ""
   }</div>
      <div style="font-size:16px;font-weight:800;margin-top:3px">${esc(x.name)}</div></div>
-     <button class="btn" style="background:rgba(255,255,255,.2)" id="mClose">إغلاق</button></div>
-   <div class="mbody">
+     <button class="btn" style="background:rgba(255,255,255,.2)" id="evBack">رجوع</button></div>
+   <div class="evbody">
      <div class="tip">أدخل الأرقام الخام لكل مؤشر كما هي من أدوات القياس. نسبة التنفيذ تُحسب في الخادم
        ولها حد أعلى 100%، والتقدير يظهر بعد استكمال المؤشرات الـ${K.kpis.length} كلها.</div>`;
   if (tuned.length) {
@@ -479,7 +512,7 @@ async function openEval(id) {
      <button class="btn ghost" id="evCancel">إلغاء</button>
      <span id="evProg" style="font-size:12px;color:var(--muted);font-weight:700"></span></div>
    </div>`;
-  $("#modalBody").innerHTML = h;
+  $("#content").innerHTML = h;
 
   const missCentral = K.kpis.filter((k) => k.centralField && k.centralValue === null);
   if (missCentral.length) {
@@ -488,14 +521,12 @@ async function openEval(id) {
     box.style.margin = "0 0 14px";
     box.innerHTML = `بيانات المؤسسة المركزية ناقصة، فتعذّر حساب ${missCentral.length} مؤشراً تعتمد عليها ` +
       `(${missCentral.map((k) => k.n).join(" · ")}). يدخلها الحساب الفني مرة واحدة للمؤسسة.`;
-    $("#modalBody").querySelector(".mbody").prepend(box);
+    $("#content").querySelector(".evbody").prepend(box);
   }
   if (!EDITABLE) {
-    $("#modalBody").querySelectorAll("[data-k], #evNotes, #stOn, #stText").forEach((el) =>
-      el.disabled = true
-    );
+    $("#content").querySelectorAll("[data-k], #evNotes, #stOn, #stText").forEach((el) => el.disabled = true);
   }
-  $("#modalBody").querySelectorAll("[data-k]").forEach((el) => {
+  $("#content").querySelectorAll("[data-k]").forEach((el) => {
     const ev = el.tagName === "SELECT" ? "onchange" : "oninput";
     el[ev] = () => {
       const n = el.dataset.k, f = el.dataset.f;
@@ -506,7 +537,7 @@ async function openEval(id) {
       if (f !== "note") evCalc();
     };
   });
-  $("#modalBody").querySelectorAll("[data-note]").forEach((b) =>
+  $("#content").querySelectorAll("[data-note]").forEach((b) =>
     b.onclick = () => {
       const ta = $("#nt" + b.dataset.note);
       ta.hidden = !ta.hidden;
@@ -519,7 +550,11 @@ async function openEval(id) {
       $("#stBox").hidden = !$("#stOn").checked;
     };
   }
-  $("#mClose").onclick = $("#evCancel").onclick = () => $("#modal").classList.remove("on");
+  const back = () => {
+    SEC = EVBACK ?? "mine";
+    render();
+  };
+  $("#evBack").onclick = $("#evCancel").onclick = back;
   if ($("#evSave")) $("#evSave").onclick = evSave;
   evCalc();
   evHistory(id);
@@ -705,8 +740,8 @@ async function evSave() {
         story: { on: $("#stOn").checked, text: $("#stText").value },
       },
     });
-    $("#modal").classList.remove("on");
     toast(`حُفظ التقييم — ${r.status} · ${r.filled} من ${r.total} مؤشراً`);
+    SEC = EVBACK ?? "mine";
     await render();
   } catch (e) {
     toast(e.message, true);
@@ -731,14 +766,22 @@ function rTeam() {
         ${list.length} مؤسسة · إنجاز ${(d.length / list.length * 100).toFixed(0)}% · متوسط ${
         d.length ? avgOf(d).toFixed(1) + "%" : "—"
       }</span></div>
-      <div class="tbl" style="margin:0"><table><thead><tr><th style="width:75px">الحساب</th>
+      <div class="tbl" style="margin:0"><table><thead><tr><th style="width:78px">اسم المستخدم</th>
+      <th style="min-width:170px">الموظف</th>
       <th style="width:70px">مسندة</th><th style="width:70px">مكتملة</th><th style="width:80px">قيد التقييم</th>
       <th style="width:70px">لم تبدأ</th><th style="width:170px">نسبة الإنجاز</th>
       <th style="width:90px">متوسط النتيجة</th></tr></thead><tbody>` +
         evs.map((e) => {
           const m = list.filter((x) => x.evaluator === e), dm = done(m);
           const r = m.length ? dm.length / m.length * 100 : 0;
-          return `<tr><td class="mono">${e}</td><td>${m.length}</td><td><b>${dm.length}</b></td>
+          const acc = EVNAMES[e];
+          return `<tr><td class="mono">${e}</td>
+          <td class="r">${
+            acc
+              ? `${esc(acc.name)}<div class="ogl">${esc(acc.title)}</div>`
+              : '<span style="color:var(--muted)">غير مسجَّل</span>'
+          }</td>
+          <td>${m.length}</td><td><b>${dm.length}</b></td>
           <td>${m.filter((x) => x.status === "قيد التقييم").length}</td>
           <td>${m.filter((x) => x.status === "لم يبدأ").length}</td>
           <td><div style="display:flex;gap:7px;align-items:center">
@@ -1006,9 +1049,9 @@ let REP = null;
 
 function rReports() {
   const mine = myTeams();
-  return `<h3 class="st">التقارير</h3>
-  <p class="sl">اختر الجهة ومستوى التفصيل، ثم ولّد التقرير واطبعه أو احفظه PDF من المتصفح.</p>
-  <div class="card">
+  return `<h3 class="st noprint">التقارير</h3>
+  <p class="sl noprint">اختر الجهة ومستوى التفصيل، ثم ولّد التقرير واطبعه أو احفظه PDF من المتصفح.</p>
+  <div class="card noprint">
     <div class="finputs" style="padding:0;align-items:flex-end">
       <div class="fld" style="flex:1 1 280px"><label>الجهة المُصدِرة</label>
         <select id="rpTeam" style="width:100%">${
@@ -1032,6 +1075,12 @@ function rReports() {
       <span>ملاحظات المقيّمين — العامة وملاحظات المؤشرات</span></label>
     <label class="ckrow"><input type="checkbox" id="rpStories" checked>
       <span>قصص النجاح — المعتمدة والمرشَّحة</span></label>
+    <label class="ckrow"><input type="checkbox" id="rpCompare" checked>
+      <span>المقارنة بالدورة السابقة والأداء التراكمي</span></label>
+    <label class="ckrow"><input type="checkbox" id="rpTop" checked>
+      <span>الأعلى أداءً وذات الأولوية في المتابعة</span></label>
+    <label class="ckrow"><input type="checkbox" id="rpDoneOnly" checked>
+      <span>التفصيل الموسّع للمؤسسات المكتملة فقط — يمنع مئات الصفحات الفارغة</span></label>
     <div style="display:flex;gap:9px;margin-top:14px;flex-wrap:wrap">
       <button class="btn" id="rpGen">توليد التقرير</button>
       <button class="btn ghost" id="csvBtn">تصدير CSV</button>
@@ -1043,7 +1092,13 @@ function rReports() {
 async function repGenerate() {
   const team = $("#rpTeam").value;
   const level = document.querySelector('input[name="rplevel"]:checked').value;
-  const withNotes = $("#rpNotes").checked, withStories = $("#rpStories").checked;
+  const opt = {
+    withNotes: $("#rpNotes").checked,
+    withStories: $("#rpStories").checked,
+    withCompare: $("#rpCompare").checked,
+    withTop: $("#rpTop").checked,
+    doneOnly: $("#rpDoneOnly").checked,
+  };
   $("#rpOut").innerHTML = `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التوليد…</div>`;
   try {
     REP = await api(
@@ -1053,7 +1108,8 @@ async function repGenerate() {
     $("#rpOut").innerHTML = `<div class="tip red">${esc(e.message)}</div>`;
     return;
   }
-  $("#rpOut").innerHTML = repHtml(REP, { withNotes, withStories });
+  $("#rpOut").innerHTML = repHtml(REP, opt);
+  repToc();
   const b = $("#rpPrint");
   if (b) b.onclick = () => globalThis.print();
   repCharts(REP);
@@ -1071,10 +1127,51 @@ function repHtml(D, opt) {
   });
   const today = new Date().toLocaleDateString("ar-BH-u-nu-latn");
   const lvl = RLEVELS.find(([v]) => v === D.level)[1];
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  // رقم نسخة يميّز كل إصدار: رمز الفريق + العام + ختم زمني
+  const serial = `${D.teamMeta.code}/${D.year.slice(0, 4)}/${now.getFullYear()}${pad(now.getMonth() + 1)}${
+    pad(now.getDate())
+  }-${pad(now.getHours())}${pad(now.getMinutes())}`;
 
   let h = `<div class="report" id="rpDoc">
   <div style="display:flex;gap:9px;margin-bottom:14px" class="noprint">
-    <button class="btn" id="rpPrint">طباعة / حفظ PDF</button></div>
+    <button class="btn" id="rpPrint">طباعة / حفظ PDF</button>
+    <span class="asgnote">تُطبع صفحات التقرير وحدها؛ شاشة الخيارات لا تدخل الطباعة.</span></div>
+
+  <section class="rcover">
+    <div class="rcover-logos">
+      <img src="/img/moe-square.png" alt="وزارة التربية والتعليم">
+      <img src="/img/green-square.png" alt="مبادرة التعليم الأخضر">
+    </div>
+    <div class="rcover-org">${esc(D.issuer.org)}</div>
+    <h1>تقرير تقييم المؤسسات التعليمية</h1>
+    <div class="rcover-sub">ضمن مبادرة التعليم الأخضر بمملكة البحرين</div>
+    <div class="rcover-year">${esc(D.year)}</div>
+    <div class="rcover-tbl"><table><tbody>
+      <tr><td>مستوى التقرير</td><td>${esc(lvl)}</td></tr>
+      <tr><td>عدد المؤسسات</td><td>${D.rows.length}</td></tr>
+      <tr><td>تاريخ الإصدار</td><td>${today}</td></tr>
+      <tr><td>أصدره</td><td>${esc(D.generatedBy.name)} — ${esc(D.generatedBy.title)}</td></tr>
+      <tr><td>رقم النسخة</td><td class="mono">${esc(serial)}</td></tr>
+    </tbody></table></div>
+    <div class="rcover-foot">فريق التعليم الأخضر · وزارة التربية والتعليم · مملكة البحرين</div>
+  </section>
+
+  <section class="rsec rbreak"><h3 class="rsech">فهرس التقرير</h3>
+    <div class="tbl"><table><thead><tr><th style="width:52px">م</th><th>القسم</th></tr></thead>
+    <tbody id="rpToc"></tbody></table></div>
+  </section>
+
+  <div class="rpaper" id="rpPaper">
+    <img src="/img/moe.png" alt="وزارة التربية والتعليم" class="rp-moe">
+    <div class="rp-mid"><b>${esc(D.issuer.org)}</b>
+      <span>تقرير تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر · ${esc(D.year)}</span></div>
+    <img src="/img/green-square.png" alt="مبادرة التعليم الأخضر" class="rp-green">
+  </div>
+  <div class="rfoot" id="rpFoot">${esc(D.issuer.org)} · ${esc(D.year)} · ${
+    esc(serial)
+  } · صادر بتاريخ ${today}</div>
 
   <section class="rsec">
     <div class="rhead">
@@ -1119,7 +1216,7 @@ function repHtml(D, opt) {
     const nominated = D.rows.filter((x) => x.story?.on && !D.picks.includes(x.id));
     h += `<section class="rsec"><h3 class="rsech">قصص النجاح</h3>`;
     if (!picked.length && !nominated.length) {
-      h += `<div class="tip">لا قصص معتمدة ولا مرشَّحة في هذا الفريق حتى تاريخه.</div>`;
+      h += `<div class="tip">لا قصص معتمدة ولا مرشَّحة في هذا الفريق حتى تاريخه.</div></section>`;
     }
     picked.forEach((x) => {
       const st = D.stories.find((s) => s.instId === x.id);
@@ -1144,7 +1241,7 @@ function repHtml(D, opt) {
     const withN = D.rows.filter((x) => x.notes || (x.kpiNotes ?? []).length);
     h += `<section class="rsec"><h3 class="rsech">ملاحظات فرق التقييم</h3>`;
     if (!withN.length) {
-      h += `<div class="tip">لم تُسجَّل ملاحظات على مؤسسات هذا الفريق حتى تاريخه.</div>`;
+      h += `<div class="tip">لم تُسجَّل ملاحظات على مؤسسات هذا الفريق حتى تاريخه.</div></section>`;
     }
     withN.forEach((x) => {
       h += `<div class="rnote"><div class="rnote-h"><b>${esc(x.name)}</b>
@@ -1160,12 +1257,75 @@ function repHtml(D, opt) {
     h += `</section>`;
   }
 
+  // ── الأعلى أداءً وذات الأولوية في المتابعة ──
+  if (opt.withTop && d.length) {
+    const sorted = [...d].sort((a, b) => b.pct - a.pct || b.pts - a.pts);
+    const top = sorted.slice(0, Math.min(10, sorted.length));
+    const low = sorted.slice(-Math.min(10, sorted.length)).reverse();
+    const tbl = (list, title, note) =>
+      `<h4 class="blk">${title}</h4><p class="sl">${note}</p>
+      <div class="tbl"><table><thead><tr><th style="width:40px">#</th><th style="width:58px">الرمز</th>
+      <th>المؤسسة</th><th style="width:86px">المرحلة</th><th style="width:66px">النتيجة</th>
+      <th style="width:110px">التقدير</th></tr></thead><tbody>` +
+      list.map((x, i) =>
+        `<tr><td><b>${i + 1}</b></td><td class="mono">${x.id}</td>
+        <td class="r">${esc(x.name)}</td><td>${esc(x.stage ?? "—")}</td>
+        <td><b>${x.pct}%</b></td>
+        <td style="color:${lvlColor(x.level)};font-weight:700">${esc(x.level)}</td></tr>`
+      ).join("") + `</tbody></table></div>`;
+    h += `<section class="rsec rbreak"><h3 class="rsech">الأعلى أداءً وذات الأولوية في المتابعة</h3>
+      ${tbl(top, "المؤسسات الأعلى أداءً", "مرتّبة تنازلياً بالنسبة ثم بالنقاط.")}
+      ${tbl(low, "المؤسسات ذات الأولوية في المتابعة", "الأدنى نتيجةً، وتُرشَّح لزيارة متابعة.")}</section>`;
+  }
+
+  // ── المقارنة بالدورة السابقة ──
+  if (opt.withCompare) {
+    const withPrev = D.rows.filter((x) => x.prev && x.prev.pct !== null);
+    const both = withPrev.filter((x) => x.pct !== null && !x.archived);
+    h += `<section class="rsec rbreak"><h3 class="rsech">المقارنة بالدورة السابقة</h3>
+      <div class="tip amber">دورة ${
+      esc(withPrev[0]?.prev?.year ?? "2025-2026")
+    } محسوبة بالمعادلة اللوغاريتمية السابقة ومسطرتها،
+        فالمقارنة هنا على مستوى <b>النسبة والتقدير</b> فقط. نقاط المحاور في تلك الدورة
+        على مقياس مفتوح ولا تُقارَن بنقاط الحساب الخطي، والمقارنة المحورية تبدأ من ثاني
+        دورة تُدخَل في المنصة.</div>`;
+    if (!both.length) {
+      h += `<div class="tip">لا مؤسسة اكتمل تقييمها في الدورة الجارية بعد، فلا مقارنة ممكنة.</div>`;
+    } else {
+      const up = both.filter((x) => x.pct > x.prev.pct).length;
+      const dn = both.filter((x) => x.pct < x.prev.pct).length;
+      h += `<div class="kpis">
+        <div class="kpi"><div class="lbl">مؤسسات قابلة للمقارنة</div><div class="val">${both.length}</div></div>
+        <div class="kpi"><div class="lbl">تحسّنت</div><div class="val">${up}</div></div>
+        <div class="kpi red"><div class="lbl">تراجعت</div><div class="val">${dn}</div></div>
+        <div class="kpi"><div class="lbl">دون تغيّر</div><div class="val">${both.length - up - dn}</div></div>
+      </div>
+      <div class="tbl"><table><thead><tr><th style="width:58px">الرمز</th><th>المؤسسة</th>
+      <th style="width:96px">السابقة</th><th style="width:96px">الجارية</th>
+      <th style="width:80px">الفرق</th><th style="width:110px">التقدير الحالي</th></tr></thead><tbody>` +
+        both.map((x) => {
+          const diff = Math.round((x.pct - x.prev.pct) * 10) / 10;
+          return `<tr><td class="mono">${x.id}</td><td class="r">${esc(x.name)}</td>
+          <td>${x.prev.pct}% · ${esc(x.prev.verdict ?? "—")}</td><td><b>${x.pct}%</b></td>
+          <td style="color:${
+            diff > 0 ? "var(--green)" : diff < 0 ? "var(--red)" : "var(--muted)"
+          };font-weight:700">${diff > 0 ? "+" : ""}${diff}</td>
+          <td style="color:${lvlColor(x.level)};font-weight:700">${esc(x.level)}</td></tr>`;
+        }).join("") + `</tbody></table></div>
+      <p class="sl">الحسم التراكمي يتطلب ثلاث دورات مكتملة على المنهجية الحالية، ولم تكتمل بعد.</p>`;
+    }
+    h += `</section>`;
+  }
+
   // ── التفصيلي: المؤسسات على مستوى المحاور ──
   if (D.level !== "summary") {
     h += `<section class="rsec"><h3 class="rsech">المؤسسات على مستوى المحاور</h3>
-      <div class="tbl"><table><thead><tr><th style="width:66px">الرمز</th><th>المؤسسة</th>
-      <th style="width:96px">المرحلة</th>` +
-      [1, 2, 3, 4].map((a) => `<th style="width:64px;background:${AXC[a]}">محور ${a}</th>`).join("") +
+      <p class="sl">نسب تنفيذ المحاور الأربعة لكل مؤسسة.</p>
+      <div class="tbl rp-inst"><table><thead><tr><th style="width:58px">الرمز</th><th>المؤسسة</th>
+      <th style="width:86px">المرحلة</th>` +
+      [1, 2, 3, 4].map((a) =>
+        `<th style="width:58px;background:${AXC[a]}">${["الأول", "الثاني", "الثالث", "الرابع"][a - 1]}</th>`
+      ).join("") +
       `<th style="width:70px">النتيجة</th><th style="width:110px">التقدير</th></tr></thead><tbody>` +
       D.rows.map((x) =>
         `<tr><td class="mono">${x.id}</td><td class="r">${esc(x.name)}</td>
@@ -1182,7 +1342,21 @@ function repHtml(D, opt) {
 
   // ── الموسّع: المؤشرات لكل مؤسسة ──
   if (D.level === "full") {
-    D.rows.filter((x) => (x.kpis ?? []).length).forEach((x) => {
+    const src = D.rows.filter((x) => (x.kpis ?? []).length);
+    const list = opt.doneOnly ? src.filter((x) => x.status === "مكتمل") : src;
+    if (!list.length) {
+      h += `<section class="rsec rbreak"><h3 class="rsech">تفصيل المؤشرات</h3>
+        <div class="tip">${
+        opt.doneOnly
+          ? "لم يكتمل تقييم أي مؤسسة في هذا الفريق، فلا تفصيل مؤشرات يُعرض."
+          : "لا مؤسسات لعرض مؤشراتها."
+      }</div></section>`;
+    }
+    if (opt.doneOnly && src.length !== list.length) {
+      h += `<section class="rsec"><div class="tip">التفصيل الموسّع مقصور على المؤسسات المكتملة:
+        ${list.length} من ${src.length}. أزل التحديد في شاشة التقارير لعرض الجميع.</div></section>`;
+    }
+    list.forEach((x) => {
       h += `<section class="rsec rbreak"><h3 class="rsech">${esc(x.name)} — تفصيل المؤشرات</h3>
         <div class="rmeta">${x.id} · ${esc(x.stage ?? "—")} · ${
         x.pct === null ? "غير مكتمل" : x.pct + "% · " + x.level
@@ -1204,12 +1378,35 @@ function repHtml(D, opt) {
     });
   }
 
+  // ── إجراءات فريق التعليم الأخضر: قائمة تُعلَّم يدوياً على النسخة المطبوعة ──
+  const ACTIONS = [
+    "مراجعة نتائج المؤسسات ذات الأولوية في المتابعة وتحديد أسباب التأخّر",
+    "جدولة زيارات متابعة للمؤسسات غير المستدامة خلال ثلاثين يوماً",
+    "اعتماد قصص النجاح المرشَّحة ونشرها على بقية الفرق",
+    "مخاطبة الجهات المعنية بالملاحظات المتكرّرة في المحاور الأدنى تنفيذاً",
+    "استكمال البيانات المركزية الناقصة للمؤسسات قبل الدورة القادمة",
+    "رفع التقرير المجمّع إلى الجهة الأعلى بعد اعتماده",
+  ];
+  h += `<section class="rsec rbreak"><h3 class="rsech">إجراءات فريق التعليم الأخضر</h3>
+    <p class="sl">تُعلَّم هذه القائمة يدوياً على النسخة المطبوعة، ويُكتب أمام كل بند ما اتُّخذ بشأنه.</p>
+    ${
+    ACTIONS.map((a) =>
+      `<div class="actrow"><span class="actbox"></span>
+        <div><div class="acttxt">${esc(a)}</div>
+        <div class="actline"></div></div></div>`
+    ).join("")
+  }
+    <div class="actrow"><span class="actbox"></span>
+      <div><div class="acttxt">إجراء آخر:</div><div class="actline"></div>
+      <div class="actline"></div></div></div>
+  </section>`;
+
   // ── الاعتماد ──
   const box = (t, n) =>
     `<div class="apbox"><div class="ap-l">${esc(t)}</div>
       <div class="ap-n">${esc(n)}</div>
       <div class="ap-s">التوقيع: ....................</div>
-      <div class="ap-s">التاريخ: ..... / ..... / ${esc(D.year.slice(0, 4))}</div></div>`;
+      <div class="ap-s">التاريخ: ......... / ......... / .........</div></div>`;
   h += `<section class="rsec rbreak"><h3 class="rsech">الاعتماد</h3>
     <p class="sl">تقرير ${esc(D.issuer.org)} للعام الدراسي ${esc(D.year)}، صادر بتاريخ ${today}
       عن ${esc(D.generatedBy.name)} — ${esc(D.generatedBy.title)}.</p>
@@ -1223,6 +1420,18 @@ function repHtml(D, opt) {
       النتائج وتقييمها واتخاذ الإجراءات المناسبة.</div>
   </section></div>`;
   return h;
+}
+
+/** فهرس الأقسام يُبنى من العناوين الفعلية بعد الإدراج، فلا يتخلّف عن محتوى التقرير. */
+function repToc() {
+  const tb = $("#rpToc");
+  if (!tb) return;
+  const heads = [...document.querySelectorAll("#rpDoc .rsech")]
+    .filter((el) => el.textContent.trim() !== "فهرس التقرير");
+  tb.innerHTML = heads.map((el, i) => {
+    el.id = "rsec" + (i + 1);
+    return `<tr><td class="mono">${i + 1}</td><td class="r">${esc(el.textContent.trim())}</td></tr>`;
+  }).join("");
 }
 
 function repCharts(D) {

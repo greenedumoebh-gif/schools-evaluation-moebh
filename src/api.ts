@@ -1043,11 +1043,15 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
 
   // ── مقيّمو الفريق: قائمة خفيفة لا تكشف بيانات الحسابات ──
   if (p === "/api/evaluators") {
-    if (!can(acc, "assign")) return forbid();
-    const team = url.searchParams.get("team") || (teamsOf(acc)?.[0] ?? "");
+    if (!can(acc, "assign") && !can(acc, "team")) return forbid();
+    const team = url.searchParams.get("team") ?? "";
+    const ts = teamsOf(acc);
     const rows = (await listAccounts())
-      .filter((a) => a.role === "eval" && (!team || a.team === team))
-      .map((a) => ({ id: a.id, name: a.name, team: a.team }));
+      .filter((a) =>
+        a.role === "eval" &&
+        (team ? a.team === team : (ts === null || ts.includes(a.team ?? "")))
+      )
+      .map((a) => ({ id: a.id, name: a.name, title: a.title, team: a.team }));
     return J({ team, rows });
   }
 

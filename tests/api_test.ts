@@ -318,7 +318,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.11.1", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.13.0", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;

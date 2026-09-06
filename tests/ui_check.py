@@ -101,7 +101,8 @@ with sync_playwright() as p:
         "مؤسسات المنطقة موسومة «حكومية»",
     )
     row1 = pg.locator("#content tbody tr").first.inner_text()
-    chk("المدرسة " in row1, f"تصنيف الحجم معروض في الصف الأول")
+    chk("المدرسة " in row1, "تصنيف الحجم معروض في الصف الأول")
+    chk(pg.locator("[data-move]").count() > 0, "زر طلب النقل متاح للمقيّم")
     chk(pg.evaluate("getComputedStyle(document.documentElement).direction") == "rtl", "اتجاه الصفحة RTL")
 
     # الشعارات
@@ -224,11 +225,11 @@ with sync_playwright() as p:
     chk(pg.locator(".axbox").count() == 4, f"أربعة صناديق محاور ({pg.locator('.axbox').count()})")
     chk(pg.locator(".frow").count() == 31, f"31 صف مؤشر ({pg.locator('.frow').count()})")
     chk(pg.locator(".fld .tgt").count() == 35, f"31 خانة مستهدف + 4 مقامات مركزية ({pg.locator('.fld .tgt').count()})")
-    chk("مركزي" in pg.locator("#modalBody").inner_text(), "المقام المركزي معلَّم في الشاشة")
+    chk("مركزي" in pg.locator("#content").inner_text(), "المقام المركزي معلَّم في الشاشة")
     chk(pg.locator("select[data-f=j]").count() == 6, f"6 قوائم حالة تنفيذ للمؤشرات الوصفية ({pg.locator('select[data-f=j]').count()})")
     chk(pg.locator("input[data-f=m]").count() == 2, f"خانتان ثانويتان ({pg.locator('input[data-f=m]').count()})")
     chk(
-        "مُفترض" not in pg.locator("#modalBody").inner_text(),
+        "مُفترض" not in pg.locator("#content").inner_text(),
         "مؤسسة ابتدائية: لا مستهدف مُفترض (المؤشر 20 = 4)",
     )
     t20 = pg.locator(".frow").nth(19).locator(".tgt").inner_text()
@@ -236,17 +237,17 @@ with sync_playwright() as p:
 
     # لا نص مقطوع أفقياً داخل المودال
     over = pg.evaluate(
-        "()=>{const b=document.getElementById('modalBody');"
+        "()=>{const b=document.getElementById('content');"
         "return [...b.querySelectorAll('.ftxt,.fld label')]"
         ".filter(e=>e.scrollWidth>e.clientWidth+2).length}"
     )
     chk(over == 0, f"لا نص مقطوع أفقياً في صفوف المؤشرات ({over})")
 
     # ── الإدخال والحساب الحي ──
-    inputs = pg.locator("#modalBody input[type=number]")
+    inputs = pg.locator("#content input[type=number]")
     n_in = inputs.count()
     pg.evaluate(
-        "()=>{document.querySelectorAll('#modalBody [data-k]').forEach(el=>{"
+        "()=>{document.querySelectorAll('#content [data-k]').forEach(el=>{"
         "if(el.tagName==='SELECT'){el.value='100';el.dispatchEvent(new Event('change'));}"
         "else{el.value='10';el.dispatchEvent(new Event('input'));}});}"
     )
@@ -274,8 +275,6 @@ with sync_playwright() as p:
     chk("لوغاريتمية" in pg.locator("#evHist").inner_text(), "منهجية الدورة المؤرشفة موسومة")
     chk("لا تُقارَن" in pg.locator("#evHist").inner_text(), "تنبيه اختلاف المنهجية ظاهر")
     chk(pg.locator("#evHist .tip.amber").count() == 1, "تنبيه نقص الدورات الثلاث ظاهر")
-
-    chk(pg.locator("[data-move]").count() > 0, "زر طلب النقل متاح للمقيّم")
 
     # ملاحظات المؤشرات والملاحظات العامة وترشيح قصة النجاح
     chk(pg.locator(".notebtn").count() == 31, f"زر ملاحظة لكل مؤشر ({pg.locator('.notebtn').count()})")
@@ -314,7 +313,7 @@ with sync_playwright() as p:
         "تعليق قصة النجاح محفوظ",
     )
     kept = pg.evaluate(
-        "()=>[...document.querySelectorAll('#modalBody input[data-k]')].filter(e=>e.value!=='').length"
+        "()=>[...document.querySelectorAll('#content input[data-k]')].filter(e=>e.value!=='').length"
     )
     chk(kept == n_in, f"المدخلات محفوظة بعد إعادة الفتح ({kept} من {n_in})")
 
@@ -325,10 +324,10 @@ with sync_playwright() as p:
     login(pg3, "Z1-2")
     pg3.locator('[data-open="Z1-007"]').click()
     pg3.wait_for_selector(".axbox", timeout=15000)
-    chk("مُفترض" not in pg3.locator("#modalBody").inner_text(), "مدرسة ابتدائي - إعدادي: لا مستهدف مُفترض")
+    chk("مُفترض" not in pg3.locator("#content").inner_text(), "مدرسة ابتدائي - إعدادي: لا مستهدف مُفترض")
     t20b = pg3.locator(".frow").nth(19).locator(".tgt").inner_text()
     chk(t20b == "8", f"المؤشر 20 لمدرسة ابتدائي - إعدادي = 8 حسب المرحلة العليا ({t20b})")
-    chk("ابتدائي - إعدادي" in pg3.locator(".mhead").inner_text(), "المرحلة المركّبة معروضة حرفياً في ترويسة المودال")
+    chk("ابتدائي - إعدادي" in pg3.locator(".evhead").inner_text(), "المرحلة المركّبة معروضة حرفياً في ترويسة الشاشة")
     chk("من الخطة" in pg3.locator(".frow").nth(19).inner_text(), "المستهدف موسوم «من الخطة» لا «مُفترض»")
 
     # ── رياض الأطفال: 25 مؤشراً ──
@@ -341,7 +340,8 @@ with sync_playwright() as p:
     chk(pg4.locator(".frow").count() == 25, f"روضة: 25 صف مؤشر ({pg4.locator('.frow').count()})")
     chk(pg4.locator("select[data-f=j]").count() == 2, f"روضة: مؤشران وصفيان ({pg4.locator('select[data-f=j]').count()})")
     chk(pg4.locator("input[data-f=m]").count() == 0, "روضة: لا قيم ثانوية")
-    chk("مُفترض" not in pg4.locator("#modalBody").inner_text(), "روضة: لا مستهدف مُفترض")
+    chk("مُفترض" not in pg4.locator("#content").inner_text(), "روضة: لا مستهدف مُفترض")
+    chk("4,500" in pg4.locator("#evSum").inner_text(), "روضة: السقف 4,500 في جدول النتيجة")
 
     # ── المعهد الديني الجعفري: قرار الفريق ثانوي ──
     pg5 = br.new_page(viewport={"width": 1440, "height": 950})
@@ -350,11 +350,13 @@ with sync_playwright() as p:
     login(pg5, "Z4-5")
     pg5.locator('[data-open="Z4-024"]').click()
     pg5.wait_for_selector(".axbox", timeout=15000)
-    chk("مُفترض" not in pg5.locator("#modalBody").inner_text(), "الجعفري: لا مستهدف مُفترض بعد قرار الفريق")
+    chk("مُفترض" not in pg5.locator("#content").inner_text(), "الجعفري: لا مستهدف مُفترض بعد قرار الفريق")
     t20c = pg5.locator(".frow").nth(19).locator(".tgt").inner_text()
     chk(t20c == "8", f"المؤشر 20 للجعفري = 8 ({t20c})")
-    head = pg5.locator(".mhead").inner_text()
+    head = pg5.locator(".evhead").inner_text()
     chk("معهد ديني ← ثانوي" in head, f"الترويسة تعرض النص الأصلي وقرار الفريق")
+    pg4.click("#evBack")
+    pg4.wait_for_selector("#content tbody tr", timeout=15000)
     kgrow = pg4.locator("#content tbody tr").first.inner_text()
     chk("رياض أطفال" in kgrow, "روضة: المرحلة «رياض أطفال» لا «غير مسجَّل»")
     kgall = pg4.evaluate(
@@ -381,9 +383,8 @@ with sync_playwright() as p:
     pg7.locator("[data-open]").first.click()
     pg7.wait_for_selector(".axbox", timeout=15000)
     chk(pg7.locator(".frow").count() == 31, f"مدرسة خاصة على 31 مؤشراً ({pg7.locator('.frow').count()})")
-    chk("خاصة" in pg7.locator(".mhead").inner_text(), "القطاع في ترويسة شاشة التقييم")
-    pg7.evaluate("()=>document.getElementById('modal').classList.remove('on')")
-    chk("4,500" in pg4.locator("#evSum").inner_text(), "روضة: السقف 4,500 في جدول النتيجة")
+    chk("خاصة" in pg7.locator(".evhead").inner_text(), "القطاع في ترويسة شاشة التقييم")
+    pg7.click("#evBack")
 
     # ── رئيس الفريق: كل مؤسسات فريقه وإدخال التقييم ──
     pg6 = br.new_page(viewport={"width": 1440, "height": 950})
@@ -408,8 +409,8 @@ with sync_playwright() as p:
     pg6.locator("[data-open]").first.click()
     pg6.wait_for_selector(".axbox", timeout=15000)
     chk(pg6.locator("#evSave").count() == 1, "زر حفظ التقييم متاح لرئيس الفريق")
-    pg6.evaluate("()=>document.getElementById('modal').classList.remove('on')")
-    pg6.wait_for_timeout(300)
+    pg6.click("#evBack")
+    pg6.wait_for_timeout(800)
 
     # ── شاشة التقارير ──
     pg6.locator('#nav a[data-s="reports"]').click()
@@ -450,11 +451,108 @@ with sync_playwright() as p:
     pg6.click("#rpGen")
     pg6.wait_for_selector("#rpDoc", timeout=25000)
     pg6.wait_for_timeout(1000)
-    body3 = pg6.locator("#rpDoc").inner_text()
-    chk(
-        "ملاحظات فرق التقييم" not in body3 and "قصص النجاح" not in body3,
-        "إلغاء التحديد يستبعد الملاحظات والقصص",
+    heads3 = pg6.evaluate(
+        "()=>[...document.querySelectorAll('#rpDoc .rsech')].map(e=>e.textContent.trim())"
     )
+    chk(
+        "ملاحظات فرق التقييم" not in heads3 and "قصص النجاح" not in heads3,
+        f"إلغاء التحديد يستبعد قسمَي الملاحظات والقصص ({len(heads3)} أقسام)",
+    )
+
+    # سلوك الطباعة: الشاشة تختفي والترويسة تتكرر بالشعارين
+    pg6.emulate_media(media="print")
+    pg6.wait_for_timeout(400)
+    pm = pg6.evaluate(
+        """()=>{const vis=e=>e&&getComputedStyle(e).display!=='none';const q=s=>document.querySelector(s);
+        const pa=q('.rpaper');const b=pa?pa.getBoundingClientRect():null;
+        return {sb:vis(q('.sidebar')),tb:vis(q('.topbar')),yb:vis(q('#yearbar')),
+          card:vis(q('#content > .card')),pos:pa?getComputedStyle(pa).position:'',
+          moeH:Math.round(q('.rp-moe')?.getBoundingClientRect().height||0),
+          headH:Math.round(b?b.height:0)}}"""
+    )
+    chk(not pm["sb"] and not pm["tb"] and not pm["yb"], "الطباعة تخفي الشريط الجانبي والعلوي وشريط الأعوام")
+    chk(not pm["card"], "شاشة الخيارات لا تدخل الطباعة")
+    chk(pm["pos"] == "fixed", "ترويسة الورق تتكرر في كل صفحة")
+    ratio = pm["moeH"] / pm["headH"] if pm["headH"] else 0
+    chk(
+        0.70 <= ratio <= 0.80,
+        f"شعار الوزارة {ratio:.2f} من ارتفاع الترويسة (المطلوب ثلاثة أرباع)",
+    )
+    logos = pg6.evaluate(
+        """()=>[...document.querySelectorAll('.rpaper img')].map(i=>({s:i.getAttribute('src'),
+        w:i.naturalWidth}))"""
+    )
+    chk(
+        len(logos) == 2 and all(x["w"] > 0 for x in logos),
+        f"شعارا الترويسة محمّلان ({[x['s'].split('/')[-1] for x in logos]})",
+    )
+    pg6.emulate_media(media="screen")
+    pg6.wait_for_timeout(300)
+
+    # الأقسام الجديدة: غلاف · فهرس · أعلى 10 · مقارنة · إجراءات
+    pg6.check('input[name="rplevel"][value="detailed"]')
+    pg6.click("#rpGen")
+    pg6.wait_for_selector("#rpDoc", timeout=25000)
+    pg6.wait_for_timeout(1200)
+    heads = pg6.evaluate(
+        "()=>[...document.querySelectorAll('#rpDoc .rsech')].map(e=>e.textContent.trim())"
+    )
+    for want in [
+        "فهرس التقرير",
+        "الأعلى أداءً وذات الأولوية في المتابعة",
+        "المقارنة بالدورة السابقة",
+        "إجراءات فريق التعليم الأخضر",
+        "الاعتماد",
+    ]:
+        chk(want in heads, f"قسم «{want}» موجود")
+    chk(pg6.locator(".rcover").count() == 1, "غلاف التقرير موجود")
+    cov = pg6.locator(".rcover").inner_text()
+    chk("رقم النسخة" in cov and "تاريخ الإصدار" in cov, "الغلاف يحمل رقم النسخة وتاريخ الإصدار")
+    chk(pg6.locator(".rcover-logos img").count() == 2, "شعارا الغلاف")
+    ntoc = pg6.locator("#rpToc tr").count()
+    chk(
+        ntoc == len(heads) - 1,
+        f"الفهرس يطابق أقسام التقرير ({ntoc} من {len(heads) - 1})",
+    )
+    chk(pg6.locator(".actrow").count() >= 7, f"قائمة الإجراءات ({pg6.locator('.actrow').count()} بنود)")
+    chk(pg6.locator("#rpFoot").count() == 1, "تذييل ورق التقرير موجود")
+
+    # ── الجوال: قياسات على عرض 390px ──
+    mob = br.new_page(viewport={"width": 390, "height": 800})
+    mob.on("pageerror", lambda e: errs.append(str(e)))
+    login(mob, "Z1-1")
+    sb = mob.evaluate(
+        "()=>{const s=document.querySelector('.sidebar');const r=s.getBoundingClientRect();"
+        "return {hidden:r.right<=1||getComputedStyle(s).transform!=='none',menu:"
+        "getComputedStyle(document.getElementById('mbtn')).display}}"
+    )
+    chk(sb["menu"] == "block", "زر القائمة ظاهر على الجوال")
+    chk(sb["hidden"], "الشريط الجانبي مطوي افتراضياً")
+    mob.click("#mbtn")
+    mob.wait_for_timeout(400)
+    chk(mob.locator("#scrim").count() == 1, "طبقة معتمة خلف القائمة المفتوحة")
+    # الشريط الجانبي يغطّي يمين الشاشة، فنلمس الطبقة في يسارها
+    mob.click("#scrim", position={"x": 20, "y": 300})
+    mob.wait_for_timeout(400)
+    chk(mob.locator("#scrim").count() == 0, "اللمس خارج القائمة يغلقها")
+    ovf = mob.evaluate("()=>document.documentElement.scrollWidth-document.documentElement.clientWidth")
+    chk(ovf <= 2, f"لا تمرير أفقي في الصفحة ({ovf}px)")
+    mob.locator("[data-open]").first.click()
+    mob.wait_for_selector(".axbox", timeout=20000)
+    chk(mob.locator("#modal.on").count() == 0, "شاشة التقييم صفحة كاملة لا نافذة منبثقة")
+    small = mob.evaluate(
+        """()=>[...document.querySelectorAll('#content input,#content select,#content .btn')]
+        .filter(e=>e.getBoundingClientRect().height>0 && e.getBoundingClientRect().height<40).length"""
+    )
+    chk(small == 0, f"كل عناصر اللمس 40px فأكثر ({small} أصغر)")
+    fs = mob.evaluate(
+        "()=>[...document.querySelectorAll('#content input[type=number]')]"
+        ".every(e=>parseFloat(getComputedStyle(e).fontSize)>=16)"
+    )
+    chk(fs, "حجم خط الحقول 16px فأكثر فلا يقرّب iOS الشاشة")
+    ovf2 = mob.evaluate("()=>document.documentElement.scrollWidth-document.documentElement.clientWidth")
+    chk(ovf2 <= 2, f"لا تمرير أفقي في شاشة التقييم ({ovf2}px)")
+    mob.close()
     # ── لوحة توزيع المؤسسات بالسحب والإفلات ──
     chk("assign" in lnav, "شاشة التوزيع متاحة لرئيس الفريق")
     pg6.locator('#nav a[data-s="assign"]').click()
@@ -880,9 +978,9 @@ with sync_playwright() as p:
     pg.locator("[data-open]").first.click()
     pg.wait_for_selector(".axbox", timeout=15000)
     chk(pg.locator("#evSave").count() == 0, "لا زر حفظ في عام غير جارٍ")
-    dis = pg.evaluate("()=>[...document.querySelectorAll('#modalBody [data-k]')].every(e=>e.disabled)")
+    dis = pg.evaluate("()=>[...document.querySelectorAll('#content [data-k]')].every(e=>e.disabled)")
     chk(dis, "خانات الإدخال معطَّلة في عام غير جارٍ")
-    pg.click("#mClose")
+    pg.click("#evBack")
 
     body = pg.locator("body").inner_text() + pg2.locator("body").inner_text() + pg3.locator("body").inner_text() + pg4.locator("body").inner_text() + pg5.locator("body").inner_text() + pg6.locator("body").inner_text() + pg7.locator("body").inner_text()
     chk("undefined" not in body and "NaN" not in body, "لا يوجد undefined/NaN في الصفحات")
