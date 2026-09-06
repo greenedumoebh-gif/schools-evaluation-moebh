@@ -39,12 +39,19 @@ export async function deleteMany(keys: Deno.KvKey[]) {
   }
 }
 
-export type Role = "eval" | "lead" | "tech";
+/**
+ * الأدوار:
+ * eval مقيّم · lead قائد فريق · super رئيس فرق على أكثر من منطقة ·
+ * director رئيس التعليم الأخضر (إشراف كامل بلا تعديلات تقنية) · tech الحساب الفني.
+ */
+export type Role = "eval" | "lead" | "super" | "director" | "tech";
 export interface Account {
   id: string;
   name: string;
   role: Role;
   team: string | null;
+  /** فرق رئيس الفرق — تُستخدم مع الدور super وحده */
+  teams?: string[];
   title: string;
   hash?: string;
   salt?: string;
@@ -181,6 +188,23 @@ function initialPassword(): string {
   return gen;
 }
 
+/**
+ * قراءة واحدة تكشف إن كانت التهيئة مكتملة، فلا يعيد كل عزل جديد على Deno Deploy
+ * تنفيذ خطوات التهيئة ولا يعرض صفحة الانتظار بلا داعٍ.
+ */
+export async function setupComplete(): Promise<boolean> {
+  if (!_kv) return false;
+  const [seeded, schema, rev, arch] = await kv.getMany<[boolean, number, number, boolean]>([
+    ["seeded"],
+    ["eval_schema"],
+    ["inst_rev"],
+    ["archive_seeded"],
+  ]);
+  return !!seeded.value && (schema.value ?? 1) >= EVAL_SCHEMA &&
+    (rev.value ?? 0) >= META.instRev && !!arch.value &&
+    (Deno.env.get("SEED_RESET") ?? "") === "";
+}
+
 export async function seedIfEmpty() {
   if (!_kv) return { seeded: false, reset: false, error: _kvError };
   const done = await kv.get<boolean>(["seeded"]);
@@ -207,7 +231,10 @@ export async function seedIfEmpty() {
   }
   await setMany(accBatch);
   const n = accBatch.length;
-  if (!done.value) await setMany(META.inst.map((i) => [["inst", i.id], i]));
+  if (!done.value) {
+    await setMany(META.inst.map((i) => [["inst", i.id], i]));
+    await bumpInstVer();
+  }
   await kv.set(["seeded"], true);
   if (resetToken) await kv.set(["reset_token"], resetToken);
 
@@ -297,6 +324,7 @@ export async function syncInstitutions() {
   await setMany(batch);
   const n = batch.length;
   await kv.set(["inst_rev"], META.instRev);
+  if (n) await bumpInstVer();
   if (n) console.warn(`[مزامنة] حُدّثت بيانات ${n} مؤسسة إلى المراجعة ${META.instRev}.`);
   return { synced: true, count: n };
 }
@@ -312,10 +340,27 @@ export async function listAccounts(): Promise<Account[]> {
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
+/**
+ * سرد المؤسسات مع ذاكرة مؤقتة داخل العزل.
+ * سرد 378 مفتاحاً في كل طلب كان أبطأ ما في المنصة على Deno Deploy؛ صار السرد
+ * مرة واحدة، ويُعاد فقط إذا تغيّر عدّاد النسخة — وهو قراءة مفتاح واحد.
+ */
+let _instCache: Inst[] | null = null;
+let _instCacheVer = -1;
+export async function bumpInstVer() {
+  const v = ((await kv.get<number>(["inst_ver"])).value ?? 0) + 1;
+  await kv.set(["inst_ver"], v);
+  _instCache = null;
+}
 export async function listInst(): Promise<Inst[]> {
+  const ver = (await kv.get<number>(["inst_ver"])).value ?? 0;
+  if (_instCache && _instCacheVer === ver) return _instCache;
   const out: Inst[] = [];
   for await (const e of kv.list<Inst>({ prefix: ["inst"] })) out.push(e.value);
-  return out.sort((a, b) => a.id.localeCompare(b.id));
+  out.sort((a, b) => a.id.localeCompare(b.id));
+  _instCache = out;
+  _instCacheVer = ver;
+  return out;
 }
 /** بيانات المؤسسة المركزية لعام بعينه: تُدخَل مرة وتُسحب في كل المؤشرات. */
 export interface CentralData {

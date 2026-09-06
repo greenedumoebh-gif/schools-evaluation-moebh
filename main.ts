@@ -1,6 +1,6 @@
 // منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر — نقطة التشغيل
 import { handleApi } from "./src/api.ts";
-import { kvError, META, seedIfEmpty } from "./src/db.ts";
+import { kvError, META, seedIfEmpty, setupComplete } from "./src/db.ts";
 
 const bootError: string | null = kvError;
 
@@ -18,6 +18,11 @@ function startSeeding() {
   (async () => {
     const t0 = Date.now();
     try {
+      // كل عزل جديد يبدأ بحالة idle؛ قراءة واحدة تكفي لمعرفة أن العمل تمّ سابقاً
+      if (await setupComplete()) {
+        seedState = "done";
+        return;
+      }
       const res = await seedIfEmpty();
       if (res.seeded) console.log(`تهيئة أولى: ${res.accounts} حساباً · ${res.inst} مؤسسة`);
       console.log(`اكتملت التهيئة في ${((Date.now() - t0) / 1000).toFixed(1)} ثانية.`);

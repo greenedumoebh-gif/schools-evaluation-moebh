@@ -81,21 +81,6 @@ body {
   font-weight: 700;
   min-height: 19px;
 }
-.hint {
-  font-size: 11.5px;
-  color: var(--muted);
-  margin-top: 16px;
-  line-height: 1.9;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-}
-.hint code {
-  background: var(--green-l);
-  color: var(--green-d);
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-family: Consolas, monospace;
-}
 
 .layout {
   display: flex;
@@ -1155,10 +1140,15 @@ h3.st::before {
 
 /* ── رقم الإصدار في شاشة الدخول ── */
 .lver {
-  font-size: 11px;
-  color: var(--muted);
-  text-align: center;
-  margin-top: 5px;
+  display: block;
+  width: fit-content;
+  margin: 16px auto 0;
+  padding: 4px 13px;
+  border-radius: 20px;
+  background: var(--green-l);
+  color: var(--green-d);
+  font-size: 11.5px;
+  font-weight: 700;
   letter-spacing: 0.2px;
   font-variant-numeric: lining-nums;
 }

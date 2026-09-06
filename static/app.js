@@ -83,7 +83,8 @@ async function boot() {
     ? `${tm.label} · رمز الفريق ${tm.code} · رقم ${tm.no}`
     : `${META.teams.length} فرق تقييم`;
   $("#brandVer").textContent = `الإصدار ${META.version} · ${META.released}`;
-  $("#phSub").textContent = `إدارة المنشآت التعليمية · الإصدار ${META.version} · ${VYEAR}`;
+  $("#phSub").textContent =
+    `فريق التعليم الأخضر · وزارة التربية والتعليم · الإصدار ${META.version} · ${VYEAR}`;
   buildYearTabs();
   buildViewBar();
   $("#who").innerHTML = `<div class="n">${esc(ME.name)}</div><div class="r">${esc(ME.title)}${
@@ -264,6 +265,11 @@ function rMine() {
   <p class="sl">${esc(ME.name)} · ${esc(ME.team ?? "")} — ${ROWS.length} مؤسسة ${
     isLead ? "ضمن فريقك، ولك إدخال التقييم وتعديله في أيٍّ منها" : "مسندة إليك"
   }.</p>${arch}
+  ${
+    PERMS.includes("assign") && !ARCHIVED
+      ? `<div style="margin-bottom:12px"><button class="btn" id="mineAdd">إضافة مؤسسات</button></div>`
+      : ""
+  }
   <div class="kpis">
    <div class="kpi"><div class="lbl">مؤسسة مسندة</div><div class="val">${ROWS.length}</div></div>
    <div class="kpi"><div class="lbl">مكتملة</div><div class="val">${d.length}</div></div>
@@ -310,6 +316,13 @@ function rMine() {
 }
 
 /* ── شاشة إدخال التقييم — المؤشرات التفصيلية ── */
+const ROLEP = {
+  eval: "blue",
+  lead: "amber",
+  super: "purple",
+  director: "purple",
+  tech: "",
+};
 const SECP = { "حكومية": "blue", "خاصة": "amber", "رياض أطفال": "purple" };
 const MODEP = { "نسبة": "blue", "عدد": "amber", "وصفي": "purple" };
 let EV = null; // { inst, defs, raw }
@@ -1076,10 +1089,13 @@ async function rTech() {
     وكل بدء وإنهاء مسجَّل في سجل التدقيق.<br>
     عدّل الاسم والمسمى والفريق ثم اضغط «حفظ» في السطر نفسه. تغيير الفريق لا ينقل المؤسسات
     المسندة للحساب — الإسناد يُدار من الجدول التالي.<br>
-    لتغيير <b>اسم المستخدم</b> عدّل خانة الرمز ثم اضغط «اسم المستخدم»: تُنقل مؤسساته وطلباته
-    المعلّقة إلى الاسم الجديد، وتُنهى جلساته فيدخل بالاسم الجديد.</p>
+    عدّل ما تشاء في أي عدد من الأسطر ثم اضغط <b>«حفظ كل التعديلات»</b> مرة واحدة —
+    أو «حفظ» في سطر بعينه. تغيير <b>اسم المستخدم</b> ينقل مؤسسات الحساب وطلباته
+    المعلّقة إلى الاسم الجديد ويُنهي جلساته فيدخل بالاسم الجديد.</p>
   <div style="display:flex;gap:9px;margin-bottom:11px;flex-wrap:wrap;align-items:center">
-    <button class="btn" id="pwSel">إعادة تعيين المحدد</button>
+    <button class="btn" id="acNew">حساب جديد</button>
+    <button class="btn" id="acSaveAll">حفظ كل التعديلات</button>
+    <button class="btn ghost" id="pwSel">إعادة تعيين المحدد</button>
     <button class="btn ghost" id="pwAll">إعادة تعيين كل الحسابات</button>
     <span style="font-size:11.5px;color:var(--muted);font-weight:700">
       الافتراضية <b class="mono">${esc(META.defaultPw ?? "12345678")}</b>
@@ -1087,18 +1103,24 @@ async function rTech() {
   </div>
   <div class="tbl"><table><thead><tr>
    <th style="width:36px"><input type="checkbox" id="pwCkAll" title="تحديد الكل"></th>
-   <th style="width:96px">اسم المستخدم</th><th style="min-width:160px">الاسم</th>
-   <th style="min-width:160px">المسمى</th><th style="width:125px">الفريق</th>
+   <th style="width:96px">اسم المستخدم</th><th style="min-width:150px">الاسم</th>
+   <th style="width:130px">الدور</th>
+   <th style="min-width:150px">المسمى</th><th style="width:125px">الفريق</th>
    <th style="width:92px">كلمة المرور</th><th style="width:330px"></th></tr></thead><tbody>` +
     A.map((a) =>
       `<tr><td><input type="checkbox" class="pwck" value="${a.id}"></td>
       <td><input class="mono" data-rn="${a.id}" value="${a.id}" style="width:88px"></td>
       <td class="r"><input data-ac="${a.id}" data-af="name" value="${esc(a.name)}" style="width:100%"></td>
+      <td><span class="pill ${ROLEP[a.role] ?? ""}">${esc(META.roleLabels[a.role] ?? a.role)}</span>${
+        a.role === "super" ? `<div class="ogl">${esc((a.teams ?? []).join(" · "))}</div>` : ""
+      }</td>
       <td><input data-ac="${a.id}" data-af="title" value="${esc(a.title)}" style="width:100%"></td>
       <td>${
-        a.role === "tech" ? "—" : `<select data-ac="${a.id}" data-af="team">` +
-          META.teams.map((t) => `<option ${t === a.team ? "selected" : ""}>${esc(t)}</option>`).join("") +
-          `</select>`
+        a.role === "tech" || a.role === "director" || a.role === "super"
+          ? "—"
+          : `<select data-ac="${a.id}" data-af="team">` +
+            META.teams.map((t) => `<option ${t === a.team ? "selected" : ""}>${esc(t)}</option>`).join("") +
+            `</select>`
       }</td>
       <td>${
         a.mustChange
@@ -1108,7 +1130,8 @@ async function rTech() {
       <td style="white-space:nowrap"><button class="btn sm" data-acsave="${a.id}">حفظ</button>
       <button class="btn sm ghost" data-rnsave="${a.id}">اسم المستخدم</button>
       <button class="btn sm ghost" data-reset="${a.id}">كلمة المرور</button>
-      <button class="btn sm ghost" data-viewas="${a.id}">معاينة</button></td></tr>`
+      <button class="btn sm ghost" data-viewas="${a.id}">معاينة</button>
+      <button class="btn sm ghost" data-acdel="${a.id}">حذف</button></td></tr>`
     ).join("") + `</tbody></table></div>
   <h4 class="blk">البيانات المركزية للمؤسسات — ${esc(VYEAR)}</h4>
   <p class="sl">عدد الطلبة والمعلمين والمواد يُدخل هنا مرة واحدة لكل مؤسسة في العام،
@@ -1309,6 +1332,87 @@ async function cdRender(team) {
   wireCentral(box, () => CDTEAM);
 }
 
+/* ── إنشاء حساب جديد ── */
+function openNewAccount() {
+  const roles = [
+    ["eval", "يرى مؤسساته المسندة ويُدخل تقييمها ويطلب نقلها"],
+    ["lead", "كل مؤسسات فريق واحد: تقييم وتوزيع وقصص نجاح والبتّ في النقل"],
+    ["super", "الصلاحيات نفسها على أكثر من فريق — اختر الفرق أدناه"],
+    ["director", "إشراف على كل الفرق بلا تعديلات تقنية: لا مؤشرات ولا حسابات ولا كلمات مرور"],
+  ];
+  $("#modalBody").innerHTML = `
+   <div class="mhead"><div>
+     <div style="font-size:12px;opacity:.85">الحسابات</div>
+     <div style="font-size:16px;font-weight:800;margin-top:3px">إنشاء حساب جديد</div></div>
+     <button class="btn" style="background:rgba(255,255,255,.2)" id="mClose">إغلاق</button></div>
+   <div class="mbody">
+     <div class="finputs" style="padding:0">
+       <div class="fld"><label>اسم المستخدم</label>
+         <input id="naId" style="width:150px" placeholder="Z1-6"></div>
+       <div class="fld" style="flex:1 1 240px"><label>اسم صاحب الحساب</label>
+         <input id="naName" style="width:100%"></div>
+       <div class="fld" style="flex:1 1 240px"><label>المسمى الوظيفي</label>
+         <input id="naTitle" style="width:100%" placeholder="يُملأ من الدور إن تُرك فارغاً"></div>
+     </div>
+     <h4 class="blk">الدور والصلاحيات</h4>
+     <div id="naRoles">` +
+    roles.map(([r, d]) =>
+      `<label class="ckrow" style="align-items:flex-start">
+        <input type="radio" name="narole" value="${r}" ${r === "eval" ? "checked" : ""}>
+        <span><b>${esc(META.roleLabels[r])}</b>
+          <div style="font-weight:400;font-size:11.5px;color:var(--muted);margin-top:2px">${esc(d)}</div>
+        </span></label>`
+    ).join("") + `</div>
+     <div id="naTeamBox" class="fld"><label>الفريق</label><select id="naTeam">` +
+    META.teams.map((t) => `<option value="${esc(t)}">${esc(META.teamMeta[t].tab)}</option>`).join("") +
+    `</select></div>
+     <div id="naTeamsBox" hidden>
+       <label class="kel">الفرق التي يغطّيها (اثنان فأكثر)</label>` +
+    META.teams.map((t) =>
+      `<label class="ckrow" style="padding:8px 12px;margin-bottom:6px">
+        <input type="checkbox" class="nateam" value="${esc(t)}">
+        <span>${esc(META.teamMeta[t].tab)}</span></label>`
+    ).join("") + `</div>
+     <h4 class="blk">كلمة المرور الابتدائية</h4>
+     <div class="fld"><label>تُطلب تغييرها عند أول دخول</label>
+       <input id="naPw" style="width:200px" value="${esc(META.defaultPw ?? "12345678")}"></div>
+     <div style="display:flex;gap:9px;margin-top:15px">
+       <button class="btn" id="naSave">إنشاء الحساب</button>
+       <button class="btn ghost" id="naCancel">إلغاء</button></div>
+   </div>`;
+  $("#modal").classList.add("on");
+  $("#mClose").onclick = $("#naCancel").onclick = () => $("#modal").classList.remove("on");
+  const sync = () => {
+    const r = document.querySelector('input[name="narole"]:checked').value;
+    $("#naTeamBox").hidden = !(r === "eval" || r === "lead");
+    $("#naTeamsBox").hidden = r !== "super";
+  };
+  document.querySelectorAll('input[name="narole"]').forEach((el) => el.onchange = sync);
+  sync();
+  $("#naSave").onclick = async () => {
+    const role = document.querySelector('input[name="narole"]:checked').value;
+    const body = {
+      id: $("#naId").value.trim(),
+      name: $("#naName").value.trim(),
+      title: $("#naTitle").value.trim(),
+      role,
+      password: $("#naPw").value,
+    };
+    if (role === "eval" || role === "lead") body.team = $("#naTeam").value;
+    if (role === "super") {
+      body.teams = [...document.querySelectorAll(".nateam:checked")].map((c) => c.value);
+    }
+    try {
+      const r = await api("/api/account-create", { method: "POST", body });
+      $("#modal").classList.remove("on");
+      toast(`أُنشئ الحساب ${r.id}` + (r.isDefault ? " بالكلمة الافتراضية" : ""));
+      await render();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
 /* ── إضافة المؤسسات: فردية ودفعة من ملف إكسل ── */
 const ADD_COLS = [
   ["name", "اسم المدرسة"],
@@ -1321,8 +1425,14 @@ const ADD_COLS = [
 const ADD_STAGES = ["ابتدائي", "إعدادي", "ثانوي", "رياض أطفال", "تعليم خاص"];
 const ADD_GENDERS = ["بنين", "بنات", "مشترك"];
 
+/** الفرق التي يغطّيها الحساب الحالي. */
+function myTeams() {
+  if (ME.role === "eval" || ME.role === "lead") return ME.team ? [ME.team] : [];
+  if (ME.role === "super") return ME.teams ?? [];
+  return META.teams;
+}
 function addTeam() {
-  return ME.role === "lead" ? ME.team : (ASG?.team ?? META.teams[0]);
+  return myTeams().includes(ASG?.team) ? ASG.team : myTeams()[0];
 }
 
 /** نموذج إكسل بأعمدة ثابتة وورقة تعليمات — يُبنى في المتصفح ولا يُرفع للخادم. */
@@ -1379,10 +1489,11 @@ async function addParseFile(file) {
 function openAdd() {
   const team = addTeam();
   const tm = META.teamMeta[team];
-  const teamSel = ME.role === "lead"
+  const mine = myTeams();
+  const teamSel = mine.length < 2
     ? `<div class="tgt" style="width:auto;padding:8px 12px">${esc(tm.tab)}</div>`
     : `<select id="adTeam">` +
-      META.teams.map((t) =>
+      mine.map((t) =>
         `<option value="${esc(t)}" ${t === team ? "selected" : ""}>${esc(META.teamMeta[t].tab)}</option>`
       ).join("") + `</select>`;
   $("#modalBody").innerHTML = `
@@ -1426,7 +1537,7 @@ function openAdd() {
   $("#mClose").onclick = () => $("#modal").classList.remove("on");
   $("#adTpl").onclick = addTemplate;
 
-  const teamNow = () => (ME.role === "lead" ? ME.team : $("#adTeam").value);
+  const teamNow = () => ($("#adTeam") ? $("#adTeam").value : team);
   $("#adOne").onclick = async () => {
     const row = {};
     ADD_COLS.forEach(([k]) => row[k] = $("#ad_" + k).value.trim());
@@ -1483,7 +1594,8 @@ async function addSend(team, rows) {
 let ASG = null; // { team, evals, rows, map, orig }
 
 async function rAssign(team) {
-  const t = ME.role === "lead" ? ME.team : (team ?? ASG?.team ?? META.teams[0]);
+  const mine = myTeams();
+  const t = mine.includes(team) ? team : (mine.includes(ASG?.team) ? ASG.team : mine[0]);
   const evals = (await api("/api/evaluators?team=" + encodeURIComponent(t))).rows.map((a) => a.id);
   const rows = ROWS.filter((r) => r.team === t);
   const map = {};
@@ -1494,9 +1606,10 @@ async function rAssign(team) {
 }
 /** تبويب لكل فريق — يظهر للحساب الفني وحده لأن رئيس الفريق مقصور على فريقه. */
 function asgTabs() {
-  if (ME.role === "lead") return "";
+  const mine = myTeams();
+  if (mine.length < 2) return "";
   return `<div class="asgtabs">` +
-    META.teams.map((t) =>
+    mine.map((t) =>
       `<button class="ytab${t === ASG.team ? " on" : ""}" data-asg="${esc(t)}"
         style="--yc:${AXC[(META.teamMeta[t].no % 4) + 1]}">${esc(META.teamMeta[t].tab)}
         <span class="ybadge">${META.teamMeta[t].code}</span></button>`
@@ -1945,6 +2058,7 @@ function openPw(force = false) {
 function wire() {
   if (SEC === "assign" && ASG) wireAssign();
   document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openEval(b.dataset.open));
+  if ($("#mineAdd")) $("#mineAdd").onclick = openAdd;
   document.querySelectorAll("[data-move]").forEach((b) => b.onclick = () => openMove(b.dataset.move));
   document.querySelectorAll("[data-tok]").forEach((b) => b.onclick = () => trDecide(b.dataset.tok, true));
   document.querySelectorAll("[data-tno]").forEach((b) => b.onclick = () => trDecide(b.dataset.tno, false));
@@ -1973,6 +2087,55 @@ function wire() {
     asRender(ASTEAM ?? META.teams[0]);
   }
   document.querySelectorAll("[data-viewas]").forEach((b) => b.onclick = () => viewAs(b.dataset.viewas));
+  if ($("#acNew")) $("#acNew").onclick = openNewAccount;
+  document.querySelectorAll("[data-acdel]").forEach((b) =>
+    b.onclick = async () => {
+      if (!confirm(`حذف الحساب ${b.dataset.acdel}؟ لا يمكن التراجع.`)) return;
+      try {
+        await api("/api/account-delete", { method: "POST", body: { id: b.dataset.acdel } });
+        toast("حُذف الحساب");
+        await render();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+  );
+  if ($("#acSaveAll")) {
+    $("#acSaveAll").onclick = async () => {
+      // لا نرسل إلا الأسطر التي تغيّرت فعلاً
+      const items = [];
+      document.querySelectorAll("[data-rn]").forEach((inp) => {
+        const id = inp.dataset.rn;
+        const g = (f) => {
+          const el = document.querySelector(`[data-ac="${id}"][data-af="${f}"]`);
+          return el ? el.value : undefined;
+        };
+        const o = { id, newId: inp.value.trim(), name: g("name"), title: g("title") };
+        const t = g("team");
+        if (t !== undefined) o.team = t;
+        const orig = ACCS.find((a) => a.id === id);
+        const same = o.newId === id && o.name === orig.name && o.title === orig.title &&
+          (o.team === undefined || o.team === orig.team);
+        if (!same) items.push(o);
+      });
+      if (!items.length) return toast("لا تعديلات لحفظها", true);
+      const ren = items.filter((o) => o.newId !== o.id).length;
+      if (
+        ren &&
+        !confirm(`سيُغيَّر اسم المستخدم لـ${ren} حساباً وتُنهى جلساتهم. المتابعة؟`)
+      ) return;
+      try {
+        const r = await api("/api/accounts-bulk", { method: "POST", body: { items } });
+        toast(
+          `حُفظ ${r.count} حساباً` + (r.renamed ? ` · ${r.renamed} اسم مستخدم` : "") +
+            (r.moved ? ` · نُقلت ${r.moved} مؤسسة` : ""),
+        );
+        await render();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
   if ($("#pwCkAll")) {
     $("#pwCkAll").onchange = () =>
       document.querySelectorAll(".pwck").forEach((c) => c.checked = $("#pwCkAll").checked);

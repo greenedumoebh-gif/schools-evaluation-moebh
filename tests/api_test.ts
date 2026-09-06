@@ -318,7 +318,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.8.1", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.10.1", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;
@@ -511,6 +511,189 @@ chk(
     kgRow.size === "الروضة المتوسطة",
   `الروضة الجديدة مرحلتها وقطاعها وتصنيفها صحيحة (${kgRow.size})`,
 );
+
+console.log("\n■ إنشاء الحسابات والأدوار الجديدة");
+chk(
+  (await call(lead1.sid, "/api/account-create", "POST", { id: "X1", name: "س", role: "eval" }))
+    .status === 403,
+  "رئيس الفريق لا يُنشئ حسابات (403)",
+);
+for (
+  const [body, msg] of [
+    [{ id: "ا ب", name: "س", role: "eval", team: "منطقة 1" }, "اسم مستخدم بصيغة خاطئة"],
+    [{ id: "NEW1", name: "س", role: "ghost", team: "منطقة 1" }, "دور غير معروف"],
+    [{ id: "NEW1", name: "", role: "eval", team: "منطقة 1" }, "اسم صاحب الحساب فارغ"],
+    [{ id: "NEW1", name: "س", role: "eval" }, "مقيّم بلا فريق"],
+    [{ id: "NEW1", name: "س", role: "super", teams: ["منطقة 1"] }, "رئيس فرق بفريق واحد"],
+    [{ id: "NEW1", name: "س", role: "super", teams: ["منطقة 9", "منطقة 1"] }, "فريق غير معروف"],
+    [{ id: "Z1-1", name: "س", role: "eval", team: "منطقة 1" }, "اسم مستخدم مأخوذ"],
+  ] as const
+) {
+  chk((await call(tech.sid, "/api/account-create", "POST", body)).status === 400, msg + " يُرفض (400)");
+}
+const mkEval = await (await call(tech.sid, "/api/account-create", "POST", {
+  id: "Z1-6",
+  name: "مقيّمة سادسة",
+  role: "eval",
+  team: "منطقة 1",
+})).json();
+chk(mkEval.ok && mkEval.isDefault === true, "إنشاء مقيّم بالكلمة الافتراضية");
+const le = await login("Z1-6", "12345678");
+chk(le.status === 200, "دخول المقيّم الجديد");
+chk(
+  (await (await call(le.sid, "/api/institutions")).json()).rows.length === 0,
+  "المقيّم الجديد بلا مؤسسات حتى تُسند إليه",
+);
+chk(
+  (await call(le.sid, "/api/accounts")).status === 403,
+  "المقيّم الجديد لا يبلغ شاشات الحساب الفني (403)",
+);
+
+const mkSuper = await (await call(tech.sid, "/api/account-create", "POST", {
+  id: "SUP1",
+  name: "رئيس فرق المناطق",
+  role: "super",
+  teams: ["منطقة 1", "منطقة 2", "منطقة 3", "منطقة 4"],
+  password: "SuperPass#26",
+})).json();
+chk(mkSuper.ok, "إنشاء رئيس فرق على أربع مناطق");
+const sp = await login("SUP1", "SuperPass#26");
+chk(sp.status === 200, "دخول رئيس الفرق");
+const spRows = (await (await call(sp.sid, "/api/institutions")).json()).rows;
+const spTeams = [...new Set(spRows.map((r: { team: string }) => r.team))].sort();
+chk(
+  spTeams.length === 4 && !spTeams.includes("رياض الأطفال"),
+  `نطاقه أربع مناطق فقط (${spTeams.join(" · ")})`,
+);
+chk(
+  (await call(sp.sid, "/api/evaluation", "POST", {
+    instId: spRows[0].id,
+    kpi: rawFor(defs, 70),
+  })).status === 200,
+  "رئيس الفرق يُدخل التقييم في نطاقه",
+);
+const kgInst = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .find((r: { team: string }) => r.team === "رياض الأطفال");
+chk(
+  (await call(sp.sid, "/api/evaluation", "POST", { instId: kgInst.id, kpi: {} })).status === 403,
+  "رئيس الفرق لا يمسّ فريقاً خارج نطاقه (403)",
+);
+chk(
+  (await call(sp.sid, "/api/accounts")).status === 403,
+  "رئيس الفرق لا يبلغ الحسابات (403)",
+);
+
+const mkDir = await (await call(tech.sid, "/api/account-create", "POST", {
+  id: "DIR",
+  name: "رئيس التعليم الأخضر",
+  role: "director",
+  password: "DirPass#2026",
+})).json();
+chk(mkDir.ok, "إنشاء حساب رئيس التعليم الأخضر");
+const dr = await login("DIR", "DirPass#2026");
+const drRows = (await (await call(dr.sid, "/api/institutions")).json()).rows;
+chk(
+  [...new Set(drRows.map((r: { team: string }) => r.team))].length === 6,
+  `رئيس التعليم الأخضر يرى الفرق الستة (${drRows.length} مؤسسة)`,
+);
+chk(
+  (await call(dr.sid, "/api/evaluation", "POST", { instId: kgInst.id, kpi: {} })).status === 200,
+  "يُدخل التقييم في أي فريق",
+);
+chk((await call(dr.sid, "/api/audit")).status === 200, "يقرأ سجل التدقيق");
+for (
+  const [path, body, msg] of [
+    ["/api/targets", { stage: "school", targets: {} }, "تعديل المؤشرات والمستهدفات"],
+    ["/api/accounts-bulk", { items: [{ id: "Z1-1" }] }, "تعديل الحسابات"],
+    ["/api/account-create", { id: "N9", name: "س", role: "eval", team: "منطقة 1" }, "إنشاء الحسابات"],
+    ["/api/reset-passwords", { ids: ["Z1-1"] }, "إعادة تعيين كلمات المرور"],
+    ["/api/view-as", { id: "Z1-1" }, "معاينة الحسابات"],
+    ["/api/year", { year: "2027-2028" }, "تغيير العام الدراسي"],
+  ] as const
+) {
+  chk((await call(dr.sid, path, "POST", body)).status === 403, `لا يملك ${msg} (403)`);
+}
+chk(
+  (await (await call(dr.sid, "/api/me")).json()).perms.includes("tech") === false,
+  "شاشة الحساب الفني غير معروضة له",
+);
+
+// الحذف
+chk(
+  (await call(tech.sid, "/api/account-delete", "POST", { id: "TECH" })).status === 400,
+  "لا يُحذف الحساب الفني (400)",
+);
+chk(
+  (await call(tech.sid, "/api/account-delete", "POST", { id: "Z1-2" })).status === 400,
+  "لا يُحذف حساب له مؤسسات مسندة (400)",
+);
+chk(
+  (await call(tech.sid, "/api/account-delete", "POST", { id: "Z1-6" })).status === 200,
+  "يُحذف حساب بلا مؤسسات",
+);
+await call(tech.sid, "/api/account-delete", "POST", { id: "SUP1" });
+await call(tech.sid, "/api/account-delete", "POST", { id: "DIR" });
+
+console.log("\n■ حفظ تعديلات الحسابات دفعة واحدة");
+chk(
+  (await call(lead1.sid, "/api/accounts-bulk", "POST", { items: [{ id: "Z3-1" }] })).status === 403,
+  "رئيس الفريق لا يحفظ تعديلات الحسابات (403)",
+);
+chk(
+  (await call(tech.sid, "/api/accounts-bulk", "POST", { items: [] })).status === 400,
+  "دفعة فارغة تُرفض (400)",
+);
+chk(
+  (await call(tech.sid, "/api/accounts-bulk", "POST", {
+    items: [{ id: "Z3-1", newId: "Z3-2" }],
+  })).status === 400,
+  "اسم مستخدم مستخدم بالفعل يُرفض (400)",
+);
+chk(
+  (await call(tech.sid, "/api/accounts-bulk", "POST", {
+    items: [{ id: "Z3-1", newId: "أ ب" }],
+  })).status === 400,
+  "صيغة اسم مستخدم خاطئة تُرفض (400)",
+);
+chk(
+  (await call(tech.sid, "/api/accounts-bulk", "POST", {
+    items: [{ id: "Z3-1", name: "س" }, { id: "Z3-1", name: "ص" }],
+  })).status === 400,
+  "تكرار الحساب في الدفعة يُرفض (400)",
+);
+const before3 = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .filter((r: { evaluator: string }) => r.evaluator === "Z3-1").length;
+const blk = await (await call(tech.sid, "/api/accounts-bulk", "POST", {
+  items: [
+    { id: "Z3-1", newId: "Z3-1A", name: "منسقة أولى", title: "عضو فريق تقييم" },
+    { id: "Z3-2", newId: "Z3-2A", name: "منسقة ثانية" },
+    { id: "Z3-3", name: "منسقة ثالثة" },
+  ],
+})).json();
+chk(
+  blk.ok && blk.count === 3 && blk.renamed === 2,
+  `حفظ ثلاثة حسابات بتغييرين لاسم المستخدم (${blk.count} · ${blk.renamed})`,
+);
+chk(blk.moved === before3 + 0 || blk.moved > 0, `نُقلت ${blk.moved} مؤسسة مع الأسماء الجديدة`);
+const accs3 = (await (await call(tech.sid, "/api/accounts")).json()).accounts;
+chk(
+  accs3.some((a: { id: string; name: string }) => a.id === "Z3-1A" && a.name === "منسقة أولى") &&
+    accs3.some((a: { id: string }) => a.id === "Z3-2A") &&
+    !accs3.some((a: { id: string }) => a.id === "Z3-1"),
+  "الأسماء الجديدة محفوظة والقديمة اختفت",
+);
+chk(
+  accs3.find((a: { id: string }) => a.id === "Z3-3").name === "منسقة ثالثة",
+  "الحساب المعدَّل بلا تغيير اسم مستخدم حُفظ أيضاً",
+);
+chk((await login("Z3-1A")).status === 200, "الدخول بالاسم الجديد بعد الحفظ الجماعي");
+chk((await login("Z3-1")).status === 401, "الاسم القديم لم يعد يعمل");
+const stillOwned = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .filter((r: { evaluator: string }) => r.evaluator === "Z3-1A").length;
+chk(stillOwned === before3, `مؤسسات الحساب انتقلت كاملة (${stillOwned} من ${before3})`);
+await call(tech.sid, "/api/accounts-bulk", "POST", {
+  items: [{ id: "Z3-1A", newId: "Z3-1" }, { id: "Z3-2A", newId: "Z3-2" }],
+});
 
 console.log("\n■ تبويبات التوزيع للحساب الفني");
 const tabsMeta = (await (await call(tech.sid, "/api/me")).json()).meta.teamMeta;

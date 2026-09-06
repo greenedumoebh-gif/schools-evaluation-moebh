@@ -92,6 +92,44 @@ export const PERMS: Record<Role, string[]> = {
     "story:write",
     "transfer:decide",
   ],
+  // رئيس فرق: صلاحيات قائد الفريق نفسها لكن على أكثر من منطقة
+  super: [
+    "team",
+    "mine",
+    "central",
+    "assign",
+    "stats",
+    "top",
+    "reports",
+    "transfers",
+    "eval:write",
+    "central:write",
+    "assign:write",
+    "inst:write",
+    "picks:write",
+    "story:write",
+    "transfer:decide",
+  ],
+  // رئيس التعليم الأخضر: إشراف على الجميع بلا تعديلات تقنية
+  // (لا مؤشرات ولا مستهدفات ولا حسابات ولا كلمات مرور ولا معاينة)
+  director: [
+    "team",
+    "mine",
+    "central",
+    "assign",
+    "stats",
+    "top",
+    "reports",
+    "transfers",
+    "eval:write",
+    "central:write",
+    "assign:write",
+    "inst:write",
+    "picks:write",
+    "story:write",
+    "transfer:decide",
+    "audit:read",
+  ],
   tech: [
     "tech",
     "team",
@@ -114,11 +152,24 @@ export function can(acc: Account, perm: string): boolean {
   return PERMS[acc.role].includes(perm);
 }
 
+/** الفرق التي يغطيها هذا الحساب. القائمة الفارغة تعني «كل الفرق». */
+export function teamsOf(acc: Account): string[] | null {
+  if (acc.role === "eval" || acc.role === "lead") return acc.team ? [acc.team] : [];
+  if (acc.role === "super") return acc.teams ?? [];
+  return null; // director و tech: الجميع
+}
+
 /** نطاق المؤسسات المسموح لهذا الحساب. */
 export function scope(acc: Account): (instTeam: string, evaluator: string) => boolean {
   if (acc.role === "eval") return (_t, ev) => ev === acc.id;
-  if (acc.role === "lead") return (t, _ev) => t === acc.team;
-  return () => true;
+  const ts = teamsOf(acc);
+  if (ts === null) return () => true;
+  return (t, _ev) => ts.includes(t);
+}
+/** هل يملك الحساب صلاحية على هذا الفريق؟ */
+export function ownsTeam(acc: Account, team: string): boolean {
+  const ts = teamsOf(acc);
+  return ts === null || ts.includes(team);
 }
 
 export function requireAuth(acc: Account | null): Response | null {

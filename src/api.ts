@@ -2,6 +2,7 @@
 import {
   type Account,
   audit,
+  bumpInstVer,
   type CentralData,
   currentYear,
   delStory,
@@ -55,10 +56,12 @@ import {
   forbid,
   login,
   logout,
+  ownsTeam,
   requireAuth,
   scope,
   setViewAs,
   sidFrom,
+  teamsOf,
 } from "./auth.ts";
 
 const J = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -70,6 +73,14 @@ const J = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
 export const MAX_PICKS = 3;
 /** كلمة المرور الافتراضية عند إعادة التعيين — يُلزَم صاحبها بتغييرها عند أول دخول. */
 export const DEFAULT_PW = "12345678";
+/** مسميات الأدوار المعروضة — مصدر واحد للواجهة والتحقّق. */
+export const ROLE_LABELS: Record<string, string> = {
+  eval: "مقيّم",
+  lead: "قائد فريق تقييم",
+  super: "رئيس فرق التقييم",
+  director: "رئيس التعليم الأخضر",
+  tech: "الحساب الفني",
+};
 /**
  * نافذة الأعوام: سنتان سابقتان · الحالي · القادم، ولا تسبق بداية الخط الزمني.
  * الخط الزمني يبدأ من 2025-2026 وهو عام مؤرشف مقيَّم في الملفات المركزية.
@@ -196,17 +207,20 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         yearColorFallback: META.yearColorFallback,
         archiveYear: META.archiveYear,
         teamMeta: META.teamMeta,
+        roleLabels: ROLE_LABELS,
         sectors: META.sectors,
         sizeRule: META.sizeRule,
         centralFields: META.centralFields,
         denomMap: META.denomMap,
       },
       // ترتيب الشاشات: تبدأ بالشاشة الأساسية لكل دور
-      perms: ({
+      perms: (({
         eval: ["mine", "central", "stats", "transfers"],
         lead: ["team", "mine", "central", "assign", "stats", "top", "transfers", "reports"],
+        super: ["team", "mine", "central", "assign", "stats", "top", "transfers", "reports"],
+        director: ["team", "mine", "central", "assign", "stats", "top", "transfers", "reports"],
         tech: ["tech", "team", "central", "assign", "stats", "top", "transfers", "reports"],
-      }[acc.role] as string[]).filter((x) => can(acc, x)),
+      } as Record<string, string[]>)[acc.role] ?? []).filter((x) => can(acc, x)),
     });
   }
 
@@ -401,7 +415,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
     if (!inScope(inst.team, inst.evaluator)) {
       return forbid(
-        acc.role === "lead" ? "هذه المؤسسة خارج فريقك" : "هذه المؤسسة ليست ضمن مؤسساتك",
+        acc.role === "eval" ? "هذه المؤسسة ليست ضمن مؤسساتك" : "هذه المؤسسة خارج نطاقك",
       );
     }
     if (body.year !== undefined && String(body.year) !== await currentYear()) {
@@ -465,7 +479,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
   // ── أعلى 10 والاختيارات ──
   if (p === "/api/top") {
     const [inst, evals] = await Promise.all([listInst(), getEvals(await currentYear())]);
-    const teams = acc.role === "lead" ? [acc.team!] : META.teams;
+    const teams = teamsOf(acc) ?? META.teams;
     const stories = await listStories();
     const out = [];
     for (const t of teams) {
@@ -496,7 +510,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     if (!instId || typeof instId !== "string") return J({ error: "المؤسسة غير محددة" }, 400);
     const inst = (await kv.get<{ team: string }>(["inst", instId])).value;
     if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
-    if (acc.role === "lead" && inst.team !== acc.team) return forbid("المؤسسة خارج فريقك");
+    if (!ownsTeam(acc, inst.team)) return forbid("المؤسسة خارج نطاقك");
     // لا تُختار إلا من أعلى 10 في فريقها
     const [all, evals] = await Promise.all([listInst(), getEvals(await currentYear())]);
     const top = all.filter((i) => i.team === inst.team)
@@ -525,7 +539,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     if (!instId || typeof instId !== "string") return J({ error: "المؤسسة غير محددة" }, 400);
     const inst = (await kv.get<{ team: string }>(["inst", instId])).value;
     if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
-    if (acc.role === "lead" && inst.team !== acc.team) return forbid("المؤسسة خارج فريقك");
+    if (!ownsTeam(acc, inst.team)) return forbid("المؤسسة خارج نطاقك");
     if (!(await getPicks(inst.team)).includes(instId)) {
       return forbid("اختر المؤسسة أولاً ضمن الثلاث");
     }
@@ -674,11 +688,12 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
   // ── طلبات نقل المؤسسات بين المقيّمين داخل الفريق ──
   if (p === "/api/transfers" && req.method === "GET") {
     const all = await listTransfers();
-    const rows = acc.role === "tech"
+    const ts = teamsOf(acc);
+    const rows = acc.role === "eval"
+      ? all.filter((t) => t.by === acc.id || t.fromEval === acc.id || t.toEval === acc.id)
+      : ts === null
       ? all
-      : acc.role === "lead"
-      ? all.filter((t) => t.team === acc.team)
-      : all.filter((t) => t.by === acc.id || t.fromEval === acc.id || t.toEval === acc.id);
+      : all.filter((t) => ts.includes(t.team));
     return J({ rows });
   }
   if (p === "/api/transfers" && req.method === "POST") {
@@ -716,7 +731,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     const t = await getTransfer(String(id ?? ""));
     if (!t) return J({ error: "الطلب غير موجود" }, 404);
     // القرار لرئيس الفريق صاحب الفريق أو للحساب الفني
-    const allowed = acc.role === "tech" || (acc.role === "lead" && acc.team === t.team);
+    const allowed = acc.role !== "eval" && ownsTeam(acc, t.team);
     if (!allowed) return forbid("البتّ في طلبات النقل من صلاحية رئيس الفريق أو الحساب الفني");
     if (t.status !== "معلّق") return J({ error: "الطلب مبتوت فيه سابقاً" }, 400);
     t.status = approve ? "معتمد" : "مرفوض";
@@ -727,6 +742,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       const inst = (await kv.get<Inst>(["inst", t.instId])).value;
       if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
       await kv.set(["inst", t.instId], { ...inst, evaluator: t.toEval });
+      await bumpInstVer();
     }
     await setTransfer(t);
     await audit(acc.id, approve ? "اعتماد نقل" : "رفض نقل", t.instId, `${t.fromEval} ← ${t.toEval}`);
@@ -835,9 +851,9 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
   if (p === "/api/institutions" && req.method === "POST") {
     if (!can(acc, "inst:write")) return forbid("إضافة المؤسسات خارج صلاحيتك");
     const body = await req.json().catch(() => ({}));
-    const team = String(body.team ?? (acc.role === "lead" ? acc.team : ""));
+    const team = String(body.team ?? (teamsOf(acc)?.[0] ?? ""));
     if (!META.teams.includes(team)) return J({ error: "فريق غير معروف" }, 400);
-    if (acc.role === "lead" && team !== acc.team) return forbid("الإضافة داخل فريقك فقط");
+    if (!ownsTeam(acc, team)) return forbid("الإضافة داخل نطاقك فقط");
     const rows: Record<string, unknown>[] = Array.isArray(body.rows) ? body.rows : [];
     if (!rows.length) return J({ error: "لا صفوف للإضافة" }, 400);
     if (rows.length > 500) return J({ error: "دفعة أكبر من المسموح" }, 400);
@@ -934,6 +950,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         await setCentral(year, m.inst.id, m.central);
       }
     }
+    await bumpInstVer();
     await audit(acc.id, "إضافة مؤسسات", team, `${made.length} مؤسسة`);
     return J({ ok: true, count: made.length, ids: made.map((m) => m.inst.id) });
   }
@@ -941,7 +958,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
   // ── مقيّمو الفريق: قائمة خفيفة لا تكشف بيانات الحسابات ──
   if (p === "/api/evaluators") {
     if (!can(acc, "assign")) return forbid();
-    const team = acc.role === "lead" ? acc.team : (url.searchParams.get("team") ?? "");
+    const team = url.searchParams.get("team") || (teamsOf(acc)?.[0] ?? "");
     const rows = (await listAccounts())
       .filter((a) => a.role === "eval" && (!team || a.team === team))
       .map((a) => ({ id: a.id, name: a.name, team: a.team }));
@@ -961,9 +978,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       const inst = (await kv.get<Inst>(["inst", String(it.instId)])).value;
       if (!inst) return J({ error: `المؤسسة ${it.instId} غير موجودة` }, 404);
       if (!inScope(inst.team, inst.evaluator)) return forbid(`المؤسسة ${it.instId} خارج نطاقك`);
-      if (acc.role === "lead" && inst.team !== acc.team) {
-        return forbid(`المؤسسة ${it.instId} خارج فريقك`);
-      }
+      if (!ownsTeam(acc, inst.team)) return forbid(`المؤسسة ${it.instId} خارج نطاقك`);
       const ev = (await kv.get<Account>(["account", String(it.evaluator)])).value;
       if (!ev || ev.role !== "eval") return J({ error: `المقيّم ${it.evaluator} غير موجود` }, 400);
       if (ev.team !== inst.team) {
@@ -974,8 +989,166 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     for (const { inst, to } of plan) {
       await kv.set(["inst", inst.id], { ...inst, evaluator: to });
     }
+    await bumpInstVer();
     await audit(acc.id, "توزيع المؤسسات", plan[0]?.inst.team ?? "", `${plan.length} مؤسسة`);
     return J({ ok: true, count: plan.length });
+  }
+
+  // ── إنشاء حساب جديد بدور وصلاحيات ──
+  if (p === "/api/account-create" && req.method === "POST") {
+    if (!can(acc, "accounts:write")) return forbid("إنشاء الحسابات من صلاحية الحساب الفني");
+    const b = await req.json().catch(() => ({}));
+    const id = String(b.id ?? "").trim();
+    if (!/^[A-Za-z0-9._-]{2,24}$/.test(id)) {
+      return J({ error: "اسم المستخدم: حرفان إلى 24 من A-Z و0-9 و . _ -" }, 400);
+    }
+    if ((await kv.get(["account", id])).value) {
+      return J({ error: `اسم المستخدم ${id} مستخدم بالفعل` }, 400);
+    }
+    const role = String(b.role ?? "");
+    if (!ROLE_LABELS[role]) return J({ error: "دور غير معروف" }, 400);
+    const name = String(b.name ?? "").trim().slice(0, 120);
+    if (!name) return J({ error: "اسم صاحب الحساب مطلوب" }, 400);
+    const title = String(b.title ?? ROLE_LABELS[role]).trim().slice(0, 120);
+
+    let team: string | null = null;
+    let teams: string[] | undefined;
+    if (role === "eval" || role === "lead") {
+      team = String(b.team ?? "");
+      if (!META.teams.includes(team)) return J({ error: "اختر فريقاً للحساب" }, 400);
+    } else if (role === "super") {
+      const ts: string[] = Array.isArray(b.teams) ? b.teams.map(String) : [];
+      const bad = ts.filter((t) => !META.teams.includes(t));
+      if (bad.length) return J({ error: `فرق غير معروفة: ${bad.join(" · ")}` }, 400);
+      if (ts.length < 2) return J({ error: "رئيس الفرق يغطّي فريقين فأكثر" }, 400);
+      teams = ts;
+      team = ts[0];
+    }
+    const pw = String(b.password ?? DEFAULT_PW);
+    if (pw.length < 8) return J({ error: "كلمة مرور 8 محارف فأكثر" }, 400);
+    const salt = newSalt();
+    const account: Account = {
+      id,
+      name,
+      role: role as Account["role"],
+      team,
+      title,
+      salt,
+      hash: await hashPw(pw, salt),
+      mustChange: true,
+    };
+    if (teams) account.teams = teams;
+    await kv.set(["account", id], account);
+    await audit(
+      acc.id,
+      "إنشاء حساب",
+      id,
+      `${ROLE_LABELS[role]}${teams ? " · " + teams.join(" · ") : team ? " · " + team : ""}`,
+    );
+    return J({ ok: true, id, role, isDefault: pw === DEFAULT_PW });
+  }
+
+  // ── حذف حساب — يُمنع إن كانت له مؤسسات مسندة ──
+  if (p === "/api/account-delete" && req.method === "POST") {
+    if (!can(acc, "accounts:write")) return forbid();
+    const { id } = await req.json().catch(() => ({}));
+    const target = (await kv.get<Account>(["account", String(id)])).value;
+    if (!target) return J({ error: "الحساب غير موجود" }, 404);
+    if (target.id === acc.id) return J({ error: "لا يمكنك حذف حسابك" }, 400);
+    if (target.role === "tech") return J({ error: "لا يُحذف الحساب الفني" }, 400);
+    const owned = (await listInst()).filter((i) => i.evaluator === target.id);
+    if (owned.length) {
+      return J({ error: `للحساب ${owned.length} مؤسسة مسندة — وزّعها أولاً` }, 400);
+    }
+    await kv.delete(["account", target.id]);
+    for await (const e of kv.list<{ id: string }>({ prefix: ["session"] })) {
+      if (e.value.id === target.id) await kv.delete(e.key);
+    }
+    await audit(acc.id, "حذف حساب", target.id, target.name);
+    return J({ ok: true });
+  }
+
+  // ── حفظ تعديلات الحسابات دفعة واحدة: الاسم والمسمى والفريق واسم المستخدم ──
+  if (p === "/api/accounts-bulk" && req.method === "POST") {
+    if (!can(acc, "accounts:write")) return forbid();
+    const body = await req.json().catch(() => ({}));
+    const items: Record<string, string>[] = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) return J({ error: "لا تعديلات لحفظها" }, 400);
+    const ID_RE = /^[A-Za-z0-9._-]{2,24}$/;
+    const all = await listAccounts();
+    const known = new Map(all.map((a) => [a.id, a]));
+    const taken = new Set(all.map((a) => a.id));
+    const plan: { cur: Account; next: Account; from: string }[] = [];
+    const seen = new Set<string>();
+    // تحقّق كامل من الدفعة قبل أي كتابة
+    for (const it of items) {
+      const id = String(it.id ?? "");
+      const cur = known.get(id);
+      if (!cur) return J({ error: `الحساب ${id} غير موجود` }, 404);
+      if (seen.has(id)) return J({ error: `الحساب ${id} مكرر في الدفعة` }, 400);
+      seen.add(id);
+      const newId = it.newId === undefined ? id : String(it.newId).trim();
+      if (newId !== id) {
+        if (!ID_RE.test(newId)) {
+          return J({ error: `${id}: اسم المستخدم حرفان إلى 24 من A-Z و0-9 و . _ -` }, 400);
+        }
+        if (taken.has(newId)) return J({ error: `اسم المستخدم ${newId} مستخدم بالفعل` }, 400);
+        taken.add(newId);
+      }
+      const team = it.team === undefined ? cur.team : String(it.team);
+      if (cur.role !== "tech" && team !== null && !META.teams.includes(team)) {
+        return J({ error: `${id}: فريق غير معروف` }, 400);
+      }
+      plan.push({
+        cur,
+        from: id,
+        next: {
+          ...cur,
+          id: newId,
+          name: it.name === undefined ? cur.name : String(it.name).slice(0, 120).trim() || cur.name,
+          title: it.title === undefined ? cur.title : String(it.title).slice(0, 120).trim() || cur.title,
+          team: cur.role === "tech" ? null : team,
+        },
+      });
+    }
+    let renamed = 0, moved = 0;
+    const insts = await listInst();
+    for (const { next, from } of plan) {
+      // listAccounts يجرّد الملح والبصمة، فنقرأ السجل الكامل حتى لا تضيع كلمة المرور
+      const full = (await kv.get<Account>(["account", from])).value;
+      if (!full) return J({ error: `الحساب ${from} غير موجود` }, 404);
+      await kv.set(["account", next.id], { ...full, ...next });
+      if (next.id === from) continue;
+      renamed++;
+      await kv.delete(["account", from]);
+      for (const i of insts) {
+        if (i.evaluator === from) {
+          await kv.set(["inst", i.id], { ...i, evaluator: next.id });
+          moved++;
+        }
+      }
+      for (const t of await listTransfers()) {
+        if (t.status !== "معلّق") continue;
+        if (t.fromEval === from || t.toEval === from) {
+          await setTransfer({
+            ...t,
+            fromEval: t.fromEval === from ? next.id : t.fromEval,
+            toEval: t.toEval === from ? next.id : t.toEval,
+          });
+        }
+      }
+      for await (const e of kv.list<{ id: string }>({ prefix: ["session"] })) {
+        if (e.value.id === from) await kv.delete(e.key);
+      }
+    }
+    if (moved) await bumpInstVer();
+    await audit(
+      acc.id,
+      "حفظ تعديلات الحسابات",
+      `${plan.length} حساباً`,
+      `${renamed} اسم مستخدم · ${moved} مؤسسة`,
+    );
+    return J({ ok: true, count: plan.length, renamed, moved });
   }
 
   // ── تغيير اسم المستخدم (معرّف الدخول) ──
@@ -1016,6 +1189,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     for await (const e of kv.list<{ id: string }>({ prefix: ["session"] })) {
       if (e.value.id === from) await kv.delete(e.key);
     }
+    if (moved) await bumpInstVer();
     await audit(acc.id, "تغيير اسم المستخدم", from, `← ${to} · ${moved} مؤسسة`);
     return J({ ok: true, id: to, moved });
   }
@@ -1030,8 +1204,8 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     const nextTeam = team === undefined ? inst.team : String(team);
     if (!META.teams.includes(nextTeam)) return J({ error: "فريق غير معروف" }, 400);
     // رئيس الفريق يوزّع داخل فريقه فقط ولا ينقل مؤسسة بين الفرق
-    if (acc.role === "lead" && (inst.team !== acc.team || nextTeam !== acc.team)) {
-      return forbid("توزيع المؤسسات داخل فريقك فقط");
+    if (!ownsTeam(acc, inst.team) || !ownsTeam(acc, nextTeam)) {
+      return forbid("توزيع المؤسسات داخل نطاقك فقط");
     }
     const nextEval = evaluator === undefined ? inst.evaluator : String(evaluator);
     const ev = (await kv.get<Account>(["account", nextEval])).value;
@@ -1047,6 +1221,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       await delStory(instId);
     }
     await kv.set(["inst", instId], { ...inst, team: nextTeam, evaluator: nextEval });
+    await bumpInstVer();
     await audit(
       acc.id,
       "إسناد مؤسسة",

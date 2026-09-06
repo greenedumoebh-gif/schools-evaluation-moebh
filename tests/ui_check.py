@@ -111,6 +111,31 @@ with sync_playwright() as p:
     broken = [l for l in logos if l["w"] == 0]
     chk(len(logos) >= 2, f"صور الشعار في الصفحة ({len(logos)})")
     chk(not broken, f"لا شعار مكسور ({[b['s'] for b in broken]})")
+    # شاشة الدخول: الإصدار والتذييل وغياب معلومات الدخول الافتراضية
+    lg = br.new_page(viewport={"width": 1440, "height": 950})
+    lg.goto(BASE, wait_until="networkidle")
+    lv = lg.evaluate(
+        """()=>{const e=document.getElementById('lver');
+        if(!e) return {found:false};
+        const b=e.getBoundingClientRect();
+        const btn=document.querySelector('#loginForm button[type=submit]').getBoundingClientRect();
+        return {found:true,text:e.textContent.trim(),belowBtn:b.top>btn.bottom,
+          inView:b.top>=0&&b.bottom<=innerHeight,body:document.body.innerText}}"""
+    )
+    chk(lv["found"] and lv["inView"] and lv["belowBtn"], f"الإصدار ظاهر أسفل زر الدخول ({lv.get('text')})")
+    chk(lv.get("text", "").startswith("الإصدار "), "نص الإصدار محقون من الخادم")
+    chk("{{" not in lv["body"], "لا عناصر بديلة غير مستبدلة في الصفحة")
+    chk(
+        "Z1-1" not in lv["body"] and "TECH" not in lv["body"],
+        "لا معلومات دخول افتراضية في شاشة الدخول",
+    )
+    chk("إدارة المنشآت" not in lv["body"], "اسم الإدارة القديم أُزيل من شاشة الدخول")
+    chk(
+        "فريق التعليم الأخضر · وزارة التربية والتعليم · مملكة البحرين" in lv["body"],
+        "تذييل شاشة الدخول بالصياغة المعتمدة",
+    )
+    lg.close()
+
     # اسم المنصة ورقم الإصدار
     chk(
         "منصة تقييم المؤسسات التعليمية" in pg.title(),
@@ -374,6 +399,12 @@ with sync_playwright() as p:
     lhdr = pg6.locator("#content thead th").all_inner_texts()
     chk("المقيّم" in lhdr, f"عمود المقيّم في جدول رئيس الفريق ({' · '.join(lhdr[-3:])})")
     chk(pg6.locator("[data-open]").count() == nlead, "زر التقييم متاح لكل مؤسسة")
+    chk(pg6.locator("#mineAdd").count() == 1, "زر إضافة المؤسسات متاح من شاشة المؤسسات أيضاً")
+    pg6.click("#mineAdd")
+    pg6.wait_for_selector("#adTpl", timeout=15000)
+    chk(pg6.locator("#ad_name").count() == 1, "نافذة الإضافة تفتح من شاشة المؤسسات")
+    pg6.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    pg6.wait_for_timeout(300)
     pg6.locator("[data-open]").first.click()
     pg6.wait_for_selector(".axbox", timeout=15000)
     chk(pg6.locator("#evSave").count() == 1, "زر حفظ التقييم متاح لرئيس الفريق")
@@ -610,6 +641,76 @@ with sync_playwright() as p:
     chk(pg2.locator("[data-acsave]").count() == 37, f"زر حفظ لكل حساب ({pg2.locator('[data-acsave]').count()})")
     chk(pg2.locator("[data-rn]").count() == 37, "خانة اسم المستخدم قابلة للتعديل لكل حساب")
     chk(pg2.locator("[data-rnsave]").count() == 37, "زر تغيير اسم المستخدم لكل حساب")
+    chk(pg2.locator("#acSaveAll").count() == 1, "زر حفظ كل التعديلات موجود")
+    chk(pg2.locator("#acNew").count() == 1, "زر الحساب الجديد موجود")
+    chk(pg2.locator("[data-acdel]").count() == 37, "زر حذف لكل حساب")
+    roles = pg2.evaluate(
+        "()=>[...document.querySelectorAll('#content tbody tr')].map(r=>r.children[3].innerText.trim())"
+    )
+    chk("مقيّم" in roles and "الحساب الفني" in roles, f"عمود الدور معروض ({roles[0]})")
+    pg2.click("#acNew")
+    pg2.wait_for_selector("#naSave", timeout=15000)
+    rlabels = pg2.evaluate(
+        "()=>[...document.querySelectorAll('#naRoles input')].map(i=>i.value)"
+    )
+    chk(
+        rlabels == ["eval", "lead", "super", "director"],
+        f"الأدوار الأربعة معروضة ({' · '.join(rlabels)})",
+    )
+    chk(not pg2.locator("#naTeamBox").is_hidden(), "قائمة الفريق ظاهرة للمقيّم")
+    chk(pg2.locator("#naTeamsBox").is_hidden(), "قائمة الفرق المتعددة مخفية")
+    pg2.check('input[name="narole"][value="super"]')
+    pg2.wait_for_timeout(250)
+    chk(pg2.locator("#naTeamBox").is_hidden(), "الفريق المفرد يختفي لرئيس الفرق")
+    chk(not pg2.locator("#naTeamsBox").is_hidden(), "الفرق المتعددة تظهر لرئيس الفرق")
+    chk(pg2.locator(".nateam").count() == 6, "ست خانات اختيار للفرق")
+    pg2.check('input[name="narole"][value="director"]')
+    pg2.wait_for_timeout(250)
+    chk(
+        pg2.locator("#naTeamBox").is_hidden() and pg2.locator("#naTeamsBox").is_hidden(),
+        "رئيس التعليم الأخضر بلا اختيار فرق — نطاقه الجميع",
+    )
+    # إنشاء رئيس فرق فعلياً ثم الدخول به
+    pg2.check('input[name="narole"][value="super"]')
+    pg2.wait_for_timeout(200)
+    pg2.fill("#naId", "SUPUI")
+    pg2.fill("#naName", "رئيس فرق للاختبار")
+    pg2.fill("#naPw", "UiSuper#2026")
+    for t in ["منطقة 1", "منطقة 2"]:
+        pg2.check(f'.nateam[value="{t}"]')
+    pg2.click("#naSave")
+    pg2.wait_for_selector(".toast", timeout=15000)
+    chk("أُنشئ الحساب SUPUI" in pg2.locator(".toast").first.inner_text(), "الحساب أُنشئ")
+    pg2.wait_for_timeout(1500)
+
+    pg8 = br.new_page(viewport={"width": 1440, "height": 950})
+    pg8.on("pageerror", lambda e: errs.append(str(e)))
+    pg8.goto(BASE, wait_until="networkidle")
+    pg8.fill("#uid", "SUPUI")
+    pg8.fill("#pwd", "UiSuper#2026")
+    pg8.click("#loginForm button[type=submit]")
+    pg8.wait_for_selector("#app:not([hidden])", timeout=15000)
+    pg8.wait_for_timeout(1200)
+    pg8.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    snav = pg8.evaluate("()=>[...document.querySelectorAll('#nav a')].map(a=>a.dataset.s)")
+    chk("tech" not in snav and "assign" in snav, f"شاشات رئيس الفرق ({' · '.join(snav)})")
+    pg8.locator('#nav a[data-s="assign"]').click()
+    pg8.wait_for_selector(".asgtabs .ytab", timeout=20000)
+    chk(
+        pg8.locator(".asgtabs .ytab").count() == 2,
+        f"تبويبا فريقيه فقط ({pg8.locator('.asgtabs .ytab').count()})",
+    )
+    # تعديل سطرين معاً ثم حفظ واحد
+    pg2.fill('[data-ac="Z4-1"][data-af="name"]', "اسم مجمَّع أول")
+    pg2.fill('[data-ac="Z4-2"][data-af="name"]', "اسم مجمَّع ثانٍ")
+    pg2.click("#acSaveAll")
+    pg2.wait_for_selector(".toast", timeout=15000)
+    chk("حُفظ 2" in pg2.locator(".toast").first.inner_text(), "حفظ واحد لسطرين معاً")
+    pg2.wait_for_timeout(2000)
+    vals = pg2.evaluate(
+        "()=>['Z4-1','Z4-2'].map(i=>document.querySelector(`[data-ac='${i}'][data-af='name']`).value)"
+    )
+    chk(vals == ["اسم مجمَّع أول", "اسم مجمَّع ثانٍ"], f"الاسمان محفوظان ({' · '.join(vals)})")
     chk(pg2.locator('[data-af="team"]').count() == 36, f"قائمة فريق لكل حساب عدا الفني ({pg2.locator('[data-af=team]').count()})")
     pg2.wait_for_selector("#asBox table", timeout=20000)
     nas = pg2.locator("#asBox tbody tr").count()
