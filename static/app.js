@@ -1,6 +1,8 @@
 // واجهة منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين
 const $ = (s) => document.querySelector(s);
 const AXC = { 1: "#1E7145", 2: "#2C6FB5", 3: "#BA7517", 4: "#0F6E56" };
+/** نسخة أغمق من ألوان المحاور للأسطح التي يُكتب عليها بالأبيض — الذهبي بلونه الأصلي لا يكفي تبايناً. */
+const AXD = { 1: "#175838", 2: "#22568C", 3: "#7E4E0E", 4: "#0B5442" };
 const SC = { "مكتمل": "#1E7145", "قيد التقييم": "#BA7517", "لم يبدأ": "#C0392B" };
 const SECS = {
   mine: ["المؤسسات والتقييم", "المؤسسات ضمن نطاقك وحالة تقييمها", "▤"],
@@ -86,10 +88,17 @@ async function boot() {
   $("#app").hidden = false;
   applyTheme(ME.theme);
   VYEAR = VYEAR ?? META.currentYear;
-  const tm = ME.team ? META.teamMeta[ME.team] : null;
-  $("#brandSub").textContent = tm
-    ? `${tm.label} · رمز الفريق ${tm.code} · رقم ${tm.no}`
-    : `${META.teams.length} فرق تقييم`;
+  // النطاق قد يضم أكثر من فريق، فلا يُعرض أول فريق وكأنه الوحيد
+  const ts = myTeams();
+  $("#brandSub").textContent = ME.role === "tech"
+    ? "الحساب الفني · كل الفرق"
+    : ts.length === 1
+    ? `${META.teamMeta[ts[0]].label} · رمز الفريق ${META.teamMeta[ts[0]].code} · رقم ${
+      META.teamMeta[ts[0]].no
+    }`
+    : ts.length === META.teams.length
+    ? `إشراف على كل فرق التقييم الستة`
+    : `${ts.length} فرق ضمن نطاقك · ${ts.map((t) => META.teamMeta[t].code).join(" · ")}`;
   $("#brandVer").textContent = `الإصدار ${META.version} · ${META.released}`;
   $("#phSub").textContent =
     `فريق التعليم الأخضر · وزارة التربية والتعليم · الإصدار ${META.version} · ${VYEAR}`;
@@ -455,7 +464,8 @@ async function openEval(id) {
   const assumed = K.kpis.filter((k) => k.assumed).map((k) => k.n);
   const tuned = K.kpis.filter((k) => k.tgtEff !== k.tgtBase).map((k) => k.n);
 
-  let h = `<div class="evbar" id="evBar">
+  let h = `<div id="evBarSpace"></div>
+   <div class="evbar" id="evBar">
      <div class="eb-name">${esc(x.name)}</div>
      <div class="eb-stats">
        <span class="eb-s"><b id="ebPts">—</b><i>نقطة من ${fmt(K.cap)}</i></span>
@@ -463,6 +473,16 @@ async function openEval(id) {
        <span class="eb-s"><b id="ebLvl">—</b><i>التقدير</i></span>
        <span class="eb-s"><b id="ebFill">0 / ${K.kpis.length}</b><i>المؤشرات</i></span>
      </div>
+     <div class="eb-ax" id="ebAx">${
+    [1, 2, 3, 4].map((a) =>
+      `<button class="ebax" data-ebax="${a}" style="--yc:${AXC[a]}"
+        title="${esc(META.axname[a])}">
+        <span class="ebax-n">${["الأول", "الثاني", "الثالث", "الرابع"][a - 1]}</span>
+        <span class="ebax-v" id="ebAx${a}">—</span>
+        <span class="ebax-c" id="ebAxC${a}">0/${K.kpis.filter((k) => k.ax === a).length}</span>
+      </button>`
+    ).join("")
+  }</div>
      <span class="eb-save" id="ebSave">لا تغييرات</span>
      ${EDITABLE ? '<button class="btn sm" id="evSave">حفظ الآن</button>' : ""}
      <button class="btn sm ghost" id="evBackTop">رجوع</button>
@@ -514,7 +534,7 @@ async function openEval(id) {
   [1, 2, 3, 4].forEach((a) => {
     const rows = K.kpis.filter((k) => k.ax === a);
     if (!rows.length) return;
-    h += `<div class="axbox"><div class="axhead" style="background:${AXC[a]}">
+    h += `<div class="axbox"><div class="axhead" style="background:${AXD[a]}">
       <span>${esc(META.axname[a])}</span><span class="axbadge" id="axb${a}">—</span></div>`;
     rows.forEach((k) => {
       h += `<div class="frow"><div class="ftop"><div class="fnum">${k.n}</div>
@@ -674,6 +694,29 @@ async function openEval(id) {
     evHistory(id);
   };
   wireAxFilter();
+  document.querySelectorAll("[data-ebax]").forEach((b) =>
+    b.onclick = () => {
+      const t = document.querySelector(`#axFilter [data-ax="${b.dataset.ebax}"]`);
+      if (t) {
+        t.click();
+        t.scrollIntoView({ block: "center" });
+      }
+    }
+  );
+  evBarFit();
+  globalThis.addEventListener("resize", evBarFit);
+}
+
+/** الشريط مثبّت في أعلى النافذة، ونحجز مكانه بفاصل بارتفاعه حتى لا يقفز المحتوى. */
+function evBarFit() {
+  const bar = document.getElementById("evBar");
+  const sp = document.getElementById("evBarSpace");
+  if (!bar || !sp) return;
+  // الشريط العلوي لاصق فوقنا، فنضع شريط النتيجة تحته لا خلفه
+  const tb = document.querySelector(".topbar");
+  const top = tb ? Math.round(tb.getBoundingClientRect().height) : 0;
+  bar.style.top = top + "px";
+  sp.style.height = bar.offsetHeight + "px";
 }
 
 /** فلتر المحاور: يخفي صناديق المحاور غير المختارة أو المؤشرات المكتملة. */
@@ -733,7 +776,7 @@ async function evHistory(id) {
     h += `<div class="tbl"><table><thead><tr><th style="width:110px">الدورة</th>
       <th style="width:110px">المنهجية</th>
       <th style="width:90px">النتيجة</th><th style="width:130px">التقدير</th>` +
-      [1, 2, 3, 4].map((a) => `<th style="background:${AXC[a]}">محور ${a}</th>`).join("") +
+      [1, 2, 3, 4].map((a) => `<th style="background:${AXD[a]}">محور ${a}</th>`).join("") +
       `</tr></thead><tbody>` +
       d.cycles.map((x) =>
         `<tr><td class="r">${esc(x.year)}</td>
@@ -867,6 +910,28 @@ function evCalc() {
   }
   const left = $("#axLeft");
   if (left) left.textContent = K.kpis.length - filled;
+  // حالة كل محور لحظياً: النسبة وعدد المملوء من مؤشراته
+  [1, 2, 3, 4].forEach((a) => {
+    const tot = K.kpis.filter((k) => k.ax === a).length;
+    const v = $("#ebAx" + a), c = $("#ebAxC" + a);
+    const pc = axn[a] === tot ? Math.round(axp[a] / K.axw[a] * 1000) / 10 : null;
+    if (v) {
+      v.textContent = pc === null
+        ? (axn[a] ? Math.round(axp[a] / K.axw[a] * 1000) / 10 + "%*" : "—")
+        : pc + "%";
+      v.style.color = pc === null ? "" : lvlColor((() => {
+        let L = META.rubric[0];
+        META.rubric.forEach((b) => {
+          if (pc >= b.a) L = b;
+        });
+        return L.n;
+      })());
+    }
+    if (c) {
+      c.textContent = `${axn[a]}/${tot}`;
+      c.classList.toggle("done", axn[a] === tot);
+    }
+  });
   let h = `<div class="tbl"><table><thead><tr><th style="min-width:170px">المحور</th>
     <th style="width:120px">النقاط</th><th style="width:100px">نسبة التنفيذ</th>
     <th style="width:130px">التقدير</th></tr></thead><tbody>`;
@@ -1673,7 +1738,7 @@ function repHtml(D, opt) {
       <div class="tbl rp-inst"><table><thead><tr><th style="width:58px">الرمز</th><th>المؤسسة</th>
       <th style="width:86px">المرحلة</th>` +
       [1, 2, 3, 4].map((a) =>
-        `<th style="width:58px;background:${AXC[a]}">${["الأول", "الثاني", "الثالث", "الرابع"][a - 1]}</th>`
+        `<th style="width:58px;background:${AXD[a]}">${["الأول", "الثاني", "الثالث", "الرابع"][a - 1]}</th>`
       ).join("") +
       `<th style="width:70px">النتيجة</th><th style="width:110px">التقدير</th></tr></thead><tbody>` +
       D.rows.map((x) =>
@@ -2027,7 +2092,7 @@ async function tgRender(stage) {
   [1, 2, 3, 4].forEach((a) => {
     const rows = TGDEFS[stage].filter((k) => k.ax === a);
     if (!rows.length) return;
-    h += `<div class="axbox"><div class="axhead" style="background:${AXC[a]}">
+    h += `<div class="axbox"><div class="axhead" style="background:${AXD[a]}">
       <span>${esc(META.axname[a])}</span><span class="axbadge">${rows.length} مؤشراً</span></div>`;
     rows.forEach((k) => {
       const lock = k.mode === "وصفي", o = ov[k.n] || {};

@@ -163,26 +163,32 @@ with sync_playwright() as p:
         v = [int(x) for x in c[c.find("(") + 1:c.find(")")].split(",")[:3]]
         return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255
 
-    chk(pg.locator(".thbtn").count() == 4, f"أربع سمات للاختيار ({pg.locator('.thbtn').count()})")
+    chk(pg.locator(".thbtn").count() == 5, f"خمس سمات للاختيار ({pg.locator('.thbtn').count()})")
     chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "green", "السمة الافتراضية خضراء")
-    base_bg = pg.evaluate("()=>getComputedStyle(document.body).backgroundColor")
-    pg.locator('[data-th="dark"]').click()
-    pg.wait_for_timeout(1500)
-    dark_bg = pg.evaluate("()=>getComputedStyle(document.body).backgroundColor")
-    dark_ink = pg.evaluate("()=>getComputedStyle(document.body).color")
-    chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "dark", "التبديل إلى الداكن")
-    chk(dark_bg != base_bg, "الخلفية تتغيّر فعلاً بتغيّر السمة")
-    chk(
-        lum(dark_bg) < 0.25 and lum(dark_ink) > 0.6,
-        f"تباين السمة الداكنة سليم (خلفية {lum(dark_bg):.2f} · نص {lum(dark_ink):.2f})",
+    names = pg.evaluate("()=>[...document.querySelectorAll('.thbtn')].map(b=>b.title.split(' —')[0])")
+    chk("الملكي" in names, f"السمة الملكية ضمن الخيارات ({' · '.join(names)})")
+    snap = lambda: pg.evaluate(
+        """()=>({sb:getComputedStyle(document.querySelector('.sidebar')).backgroundColor,
+        bg:getComputedStyle(document.body).backgroundColor,
+        th:(()=>{const t=document.querySelector('th');return t?getComputedStyle(t).backgroundColor:''})(),
+        lg:getComputedStyle(document.getElementById('login')).backgroundImage})"""
     )
+    before = snap()
+    pg.locator('[data-th="royal"]').click()
+    pg.wait_for_timeout(1500)
+    after = snap()
+    chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "royal", "التبديل إلى الملكي")
+    chk(after["sb"] != before["sb"], f"الشريط الجانبي يتبع السمة ({before['sb']} ← {after['sb']})")
+    chk(after["bg"] != before["bg"], "خلفية الصفحة تتبع السمة")
+    chk(after["th"] != before["th"], f"رؤوس الجداول تتبع السمة ({after['th']})")
+    chk(after["lg"] != before["lg"], "خلفية شاشة الدخول تتبع السمة")
     pg.emulate_media(media="print")
     pg.wait_for_timeout(300)
     pbg = pg.evaluate("()=>getComputedStyle(document.body).backgroundColor")
     pink = pg.evaluate("()=>getComputedStyle(document.body).color")
     chk(
         lum(pbg) > 0.8 and lum(pink) < 0.4,
-        f"الطباعة تعود فاتحة رغم السمة الداكنة (خلفية {lum(pbg):.2f})",
+        f"الطباعة تعود إلى السمة الفاتحة (خلفية {lum(pbg):.2f})",
     )
     pg.emulate_media(media="screen")
     pg.wait_for_timeout(300)
@@ -193,6 +199,36 @@ with sync_playwright() as p:
         "()=>{const c=Chart.getChart('chDist');return c?c.options.plugins.legend.labels.color:''}"
     )
     chk(chcol.replace(" ", "") != "#20302a", f"ألوان الرسوم تتبع السمة ({chcol})")
+    # السمة الداكنة: مسح تباين شامل — كل عنصر بخلفية صريحة يجب أن يقرأ
+    pg.locator('#nav a[data-s="mine"]').click()
+    pg.wait_for_selector("#content tbody tr", timeout=15000)
+    pg.locator('[data-th="dark"]').click()
+    pg.wait_for_timeout(1500)
+    chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "dark", "التبديل إلى الداكن")
+    lgb = pg.evaluate(
+        """()=>{const e=document.querySelector('.lgbox');const cs=getComputedStyle(e);
+        return {bg:cs.backgroundColor,fg:cs.color}}"""
+    )
+    chk(lgb["bg"] == "rgb(255, 255, 255)", "صندوق الشعار يبقى أبيض في الداكن")
+    bad = pg.evaluate(
+        """()=>{
+        const lum=c=>{const v=c.match(/\d+/g).map(Number);
+          const f=x=>{x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)};
+          return 0.2126*f(v[0])+0.7152*f(v[1])+0.0722*f(v[2])};
+        const cr=(a,b)=>{const x=lum(a),y=lum(b);const hi=Math.max(x,y),lo=Math.min(x,y);
+          return (hi+0.05)/(lo+0.05)};
+        const out=[];
+        document.querySelectorAll('.sidebar *, #content *').forEach(e=>{
+          const cs=getComputedStyle(e);
+          if(!/^rgb\(/.test(cs.backgroundColor))return;
+          if(!e.textContent.trim())return;
+          if(e.getBoundingClientRect().height===0)return;
+          const r=cr(cs.color,cs.backgroundColor);
+          if(r<4.5) out.push(`${e.className||e.tagName}:${Math.round(r*10)/10}`);
+        });
+        return [...new Set(out)].slice(0,6)}"""
+    )
+    chk(len(bad) == 0, f"لا عنصر بتباين أقل من 4.5 في السمة الداكنة ({bad})")
     pg.locator('[data-th="green"]').click()
     pg.wait_for_timeout(1200)
     chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "green", "العودة إلى الأخضر")
@@ -288,9 +324,21 @@ with sync_playwright() as p:
 
     # الشريط اللاصق · الحالة الجزئية · الفلتر · الحفظ التلقائي · المقارنة بالزر
     chk(
-        pg.evaluate("()=>getComputedStyle(document.getElementById('evBar')).position") == "sticky",
-        "شريط النتيجة لاصق أعلى الشاشة",
+        pg.evaluate("()=>getComputedStyle(document.getElementById('evBar')).position") == "fixed",
+        "شريط النتيجة مثبّت لا لاصق",
     )
+    tbh = pg.evaluate("()=>Math.round(document.querySelector('.topbar').getBoundingClientRect().height)")
+    for y in (800, 4000, 9000):
+        pg.mouse.wheel(0, y)
+        pg.wait_for_timeout(250)
+        rb = pg.evaluate(
+            """()=>{const b=document.getElementById('evBar').getBoundingClientRect();
+            return {top:Math.round(b.top),vis:b.bottom>0&&b.top<innerHeight}}"""
+        )
+        chk(abs(rb["top"] - tbh) <= 2 and rb["vis"], f"الشريط يرافق التمرير عند {y} (top={rb['top']})")
+    pg.evaluate("()=>scrollTo(0,0)")
+    pg.wait_for_timeout(200)
+    chk(pg.locator(".ebax").count() == 4, "بطاقات المحاور الأربع في الشريط")
     chk(pg.locator("#ebSave").inner_text() == "الحفظ تلقائي", "بيان الحفظ التلقائي ظاهر")
     pg.evaluate(
         """()=>{const el=document.querySelector('#content [data-k="1"][data-f="j"]');
@@ -306,6 +354,19 @@ with sync_playwright() as p:
     pg.wait_for_timeout(300)
     chk(pg.locator("#ebPts").inner_text() != "—", f"النقاط تتحدث لحظياً ({pg.locator('#ebPts').inner_text()})")
     chk(pg.locator("#ebFill").inner_text().startswith("1 /"), "عدّاد المؤشرات في الشريط")
+    chk(
+        pg.locator("#ebAxC1").inner_text().startswith("1/"),
+        f"حالة المحور الأول تتحدث لحظياً ({pg.locator('#ebAxC1').inner_text()})",
+    )
+    chk(pg.locator("#ebAx1").inner_text() != "—", "نسبة المحور الأول ظاهرة في الشريط")
+    pg.locator('[data-ebax="3"]').click()
+    pg.wait_for_timeout(400)
+    chk(
+        pg.locator('#axFilter [data-ax="3"].on').count() == 1,
+        "الضغط على محور في الشريط يطبّق فلتره",
+    )
+    pg.locator('#axFilter [data-ax="0"]').click()
+    pg.wait_for_timeout(300)
     pg.wait_for_timeout(2600)
     chk("محفوظ" in pg.locator("#ebSave").inner_text(), f"الحفظ التلقائي ({pg.locator('#ebSave').inner_text()})")
     n_all = pg.locator("#content .frow:visible").count()

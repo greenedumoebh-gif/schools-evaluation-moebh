@@ -1292,7 +1292,8 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       if (bad.length) return J({ error: `فرق غير معروفة: ${bad.join(" · ")}` }, 400);
       if (ts.length < 2) return J({ error: "رئيس الفرق يغطّي فريقين فأكثر" }, 400);
       teams = ts;
-      team = ts[0];
+      // النطاق في teams؛ إبقاء team فارغاً يمنع عرض أول فريق وكأنه الوحيد
+      team = null;
     }
     const pw = String(b.password ?? DEFAULT_PW);
     if (pw.length < 8) return J({ error: "كلمة مرور 8 محارف فأكثر" }, 400);

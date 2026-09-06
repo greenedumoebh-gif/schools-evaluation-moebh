@@ -318,7 +318,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.17.0", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.18.1", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 chk(health.setup === "done", `حالة التهيئة ${health.setup}`);
@@ -654,6 +654,10 @@ const mkSuper = await (await call(tech.sid, "/api/account-create", "POST", {
 chk(mkSuper.ok, "إنشاء رئيس فرق على أربع مناطق");
 const sp = await login("SUP1", "SuperPass#26");
 chk(sp.status === 200, "دخول رئيس الفرق");
+chk(
+  (await (await call(sp.sid, "/api/me")).json()).me.team === null,
+  "رئيس الفرق بلا فريق مفرد — نطاقه في teams",
+);
 const spRows = (await (await call(sp.sid, "/api/institutions")).json()).rows;
 const spTeams = [...new Set(spRows.map((r: { team: string }) => r.team))].sort();
 chk(
@@ -1113,11 +1117,11 @@ chk(
   "سمة غير معروفة تُرفض (400)",
 );
 chk(
-  (await call(ev1.sid, "/api/theme", "POST", { theme: "dark" })).status === 200,
+  (await call(ev1.sid, "/api/theme", "POST", { theme: "royal" })).status === 200,
   "كل حساب يغيّر سمته الشخصية",
 );
 chk(
-  (await (await call(ev1.sid, "/api/me")).json()).me.theme === "dark",
+  (await (await call(ev1.sid, "/api/me")).json()).me.theme === "royal",
   "السمة محفوظة في الحساب وتعود مع الجلسة",
 );
 chk(
@@ -1126,8 +1130,8 @@ chk(
 );
 const themeMeta = (await (await call(ev1.sid, "/api/me")).json()).meta.themes;
 chk(
-  themeMeta.length === 4 && themeMeta.every((t: { id: string; sw: string[] }) => t.sw.length === 3),
-  `أربع سمات معرّفة بثلاثة ألوان لكل منها (${themeMeta.map((t: { id: string }) => t.id).join(" · ")})`,
+  themeMeta.length === 5 && themeMeta.every((t: { id: string; sw: string[] }) => t.sw.length === 3),
+  `خمس سمات معرّفة بثلاثة ألوان لكل منها (${themeMeta.map((t: { id: string }) => t.id).join(" · ")})`,
 );
 await call(ev1.sid, "/api/theme", "POST", { theme: "green" });
 
