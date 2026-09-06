@@ -25,6 +25,8 @@ export interface Raw {
   i?: string;
   j?: string;
   m?: string;
+  /** ملاحظة كتابية اختيارية — لا أثر لها في الحساب */
+  note?: string;
 }
 
 export type Stage = "school" | "kg";

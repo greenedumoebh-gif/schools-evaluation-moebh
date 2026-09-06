@@ -977,3 +977,166 @@ h3.st::before {
   margin-top: 2px;
   letter-spacing: 0.2px;
 }
+
+/* ── لافتة معاينة حساب آخر ── */
+.viewbar {
+  background: var(--purple);
+  color: #fff;
+  padding: 9px 26px;
+  font-size: 12.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.viewbar b {
+  font-weight: 800;
+}
+.viewbar .btn {
+  background: rgba(255, 255, 255, 0.22);
+  margin-right: auto;
+}
+@media print {
+  .viewbar {
+    display: none;
+  }
+}
+
+/* ── ملاحظات المؤشرات وترشيح قصة النجاح ── */
+.knote {
+  padding-right: 36px;
+  margin-top: 7px;
+}
+.notebtn {
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.notebtn:hover {
+  border-color: var(--green);
+  color: var(--green-d);
+}
+.noteta {
+  width: 100%;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.ckrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--green-l);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 14px;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.ckrow input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--green);
+}
+
+/* ── لوحة توزيع المؤسسات ── */
+.asgbar {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 13px;
+}
+.asgnote {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.asgnote.on {
+  color: var(--amber);
+}
+.asgcols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.asgcol {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  overflow: hidden;
+}
+.asghead {
+  background: var(--green-d);
+  color: #fff;
+  padding: 9px 13px;
+  font-size: 12.5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.asghead span {
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+.asgdrop {
+  padding: 9px;
+  min-height: 90px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 560px;
+  overflow-y: auto;
+}
+.asgdrop.over {
+  background: var(--green-l);
+  outline: 2px dashed var(--green);
+  outline-offset: -5px;
+}
+.asgcard {
+  background: #fbfdfb;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  cursor: grab;
+}
+.asgcard:active {
+  cursor: grabbing;
+}
+.asgcard.dragging {
+  opacity: 0.45;
+}
+.asgcard.moved {
+  border-color: var(--amber);
+  background: var(--amber-l);
+}
+.ac-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  margin-bottom: 3px;
+}
+.ac-meta {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.asgcard select {
+  width: 100%;
+  font-size: 11.5px;
+  padding: 4px 7px;
+}

@@ -29,15 +29,42 @@ export function sidFrom(req: Request): string | null {
   return m ? m[1] : null;
 }
 
-export async function currentUser(req: Request): Promise<Account | null> {
+/** الحساب المعروض حالياً، مع بيان مَن ينتحله إن وُجد. */
+export type Viewer = Account & { viewAs?: { by: string; byName: string } };
+
+export async function currentUser(req: Request): Promise<Viewer | null> {
   const sid = sidFrom(req);
   if (!sid) return null;
-  const s = await kv.get<{ id: string; exp: number }>(["session", sid]);
+  const s = await kv.get<{ id: string; exp: number; as?: string }>(["session", sid]);
   if (!s.value || s.value.exp < Date.now()) return null;
-  const acc = await getAccount(s.value.id);
-  if (!acc) return null;
-  const { hash: _h, salt: _s, ...rest } = acc;
+  const owner = await getAccount(s.value.id);
+  if (!owner) return null;
+  // معاينة حساب آخر: مقصورة على الحساب الفني، والمالك الحقيقي يبقى صاحب الجلسة
+  if (s.value.as && owner.role === "tech") {
+    const target = await getAccount(s.value.as);
+    if (target) {
+      const { hash: _h2, salt: _s2, ...t } = target;
+      return { ...(t as Account), viewAs: { by: owner.id, byName: owner.name } };
+    }
+  }
+  const { hash: _h, salt: _s, ...rest } = owner;
   return rest as Account;
+}
+
+/** أي كتابة ممنوعة أثناء المعاينة حتى لا تُنسب بيانات لحساب لم يُدخلها. */
+export function blockWhileViewing(acc: Viewer, method: string): Response | null {
+  if (!acc.viewAs || method === "GET") return null;
+  return forbid("أنت في وضع معاينة حساب آخر — الكتابة معطَّلة. اخرج من المعاينة أولاً");
+}
+
+export async function setViewAs(sid: string, as: string | null) {
+  const s = await kv.get<{ id: string; exp: number; as?: string }>(["session", sid]);
+  if (!s.value) return false;
+  const next = { ...s.value };
+  if (as) next.as = as;
+  else delete next.as;
+  await kv.set(["session", sid], next, { expireIn: Math.max(1000, next.exp - Date.now()) });
+  return true;
 }
 
 export function cookieHeader(sid: string, secure: boolean): string {
@@ -47,15 +74,34 @@ export function cookieHeader(sid: string, secure: boolean): string {
 
 // ── مصفوفة الصلاحيات ──
 export const PERMS: Record<Role, string[]> = {
-  eval: ["mine", "stats", "transfers", "eval:write", "transfer:ask"],
-  lead: ["team", "stats", "top", "reports", "transfers", "picks:write", "story:write", "transfer:decide"],
-  tech: [
-    "tech",
+  eval: ["mine", "central", "stats", "transfers", "eval:write", "central:write", "transfer:ask"],
+  lead: [
     "team",
+    "mine",
+    "central",
     "stats",
     "top",
     "reports",
     "transfers",
+    "assign",
+    "eval:write",
+    "central:write",
+    "assign:write",
+    "picks:write",
+    "story:write",
+    "transfer:decide",
+  ],
+  tech: [
+    "tech",
+    "team",
+    "central",
+    "stats",
+    "top",
+    "reports",
+    "transfers",
+    "assign",
+    "central:write",
+    "assign:write",
     "accounts:write",
     "audit:read",
     "targets:write",

@@ -71,13 +71,18 @@ export interface Evaluation {
   basis?: string;
   /** العام الدراسي الذي يخص هذه الدورة */
   year: string;
-  /** المدخلات الخام لكل مؤشر: المفتاح رقم المؤشر — i المقام · j البسط أو القيمة · m القيمة الثانوية */
-  kpi: Record<string, { i?: string; j?: string; m?: string }>;
+  /**
+   * المدخلات الخام لكل مؤشر: المفتاح رقم المؤشر — i المقام · j البسط أو القيمة
+   * · m القيمة الثانوية · note ملاحظة كتابية اختيارية لا تدخل الحساب.
+   */
+  kpi: Record<string, { i?: string; j?: string; m?: string; note?: string }>;
   /** نسب المحاور — محسوبة في الخادم، لا تُقبل من العميل */
   axes: Record<string, number | null>;
   filled: number;
   status: "لم يبدأ" | "قيد التقييم" | "مكتمل";
   notes?: string;
+  /** ترشيح المؤسسة كقصة نجاح من المقيّم أو رئيس الفريق مع تعليقه */
+  story?: { on: boolean; text: string };
   by: string;
   at: string;
 }

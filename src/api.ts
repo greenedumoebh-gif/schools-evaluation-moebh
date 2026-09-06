@@ -48,6 +48,7 @@ import {
   topStage,
 } from "./score.ts";
 import {
+  blockWhileViewing,
   can,
   cookieHeader,
   currentUser,
@@ -56,6 +57,7 @@ import {
   logout,
   requireAuth,
   scope,
+  setViewAs,
   sidFrom,
 } from "./auth.ts";
 
@@ -66,6 +68,8 @@ const J = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
   });
 
 export const MAX_PICKS = 3;
+/** كلمة المرور الافتراضية عند إعادة التعيين — يُلزَم صاحبها بتغييرها عند أول دخول. */
+export const DEFAULT_PW = "12345678";
 /**
  * نافذة الأعوام: سنتان سابقتان · الحالي · القادم، ولا تسبق بداية الخط الزمني.
  * الخط الزمني يبدأ من 2025-2026 وهو عام مؤرشف مقيَّم في الملفات المركزية.
@@ -143,6 +147,31 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
   const acc = me!;
   const inScope = scope(acc);
 
+  // ── معاينة حساب آخر — الحساب الفني وحده، وللقراءة فقط ──
+  if (p === "/api/view-as" && req.method === "POST") {
+    const sid = sidFrom(req)!;
+    const { id } = await req.json().catch(() => ({}));
+    if (!id) {
+      await setViewAs(sid, null);
+      if (acc.viewAs) await audit(acc.viewAs.by, "إنهاء معاينة حساب", acc.id);
+      return J({ ok: true, viewing: null });
+    }
+    // الفني وحده يبدأ المعاينة؛ وأثناءها لا يبدأ معاينة أخرى إلا بعد الخروج
+    const owner = acc.viewAs ? acc.viewAs.by : acc.id;
+    const ownerAcc = (await kv.get<Account>(["account", owner])).value;
+    if (!ownerAcc || ownerAcc.role !== "tech") {
+      return forbid("معاينة الحسابات من صلاحية الحساب الفني");
+    }
+    const target = (await kv.get<Account>(["account", String(id)])).value;
+    if (!target) return J({ error: "الحساب غير موجود" }, 404);
+    if (target.id === owner) return J({ error: "لا حاجة لمعاينة حسابك" }, 400);
+    await setViewAs(sid, target.id);
+    await audit(owner, "بدء معاينة حساب", target.id, `${target.name} · ${target.role}`);
+    return J({ ok: true, viewing: target.id });
+  }
+  const viewBlock = blockWhileViewing(acc, req.method);
+  if (viewBlock) return viewBlock;
+
   // ── من أنا + البيانات المرجعية ──
   if (p === "/api/me") {
     return J({
@@ -155,6 +184,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         appName: META.appName,
         appNameShort: META.appNameShort,
         version: META.version,
+        defaultPw: can(acc, "accounts:write") ? DEFAULT_PW : undefined,
         released: META.released,
         maxPicks: MAX_PICKS,
         topN: TOP_N,
@@ -172,9 +202,9 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       },
       // ترتيب الشاشات: تبدأ بالشاشة الأساسية لكل دور
       perms: ({
-        eval: ["mine", "stats", "transfers"],
-        lead: ["team", "stats", "top", "transfers", "reports"],
-        tech: ["tech", "team", "stats", "top", "transfers", "reports"],
+        eval: ["mine", "central", "stats", "transfers"],
+        lead: ["team", "mine", "central", "assign", "stats", "top", "transfers", "reports"],
+        tech: ["tech", "team", "central", "assign", "stats", "top", "transfers", "reports"],
       }[acc.role] as string[]).filter((x) => can(acc, x)),
     });
   }
@@ -257,6 +287,8 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         totalKpi: sc.total,
         status: e?.status ?? "لم يبدأ",
         notes: e?.notes ?? "",
+        story: e?.story ?? { on: false, text: "" },
+        notedKpis: Object.values(e?.kpi ?? {}).filter((c) => c.note).length,
         pct: sc.pct,
         level: sc.pct === null ? null : lvlOf(sc.pct).n,
         cap: capOf(i.team),
@@ -364,7 +396,11 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         body.instId,
       ])).value;
     if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
-    if (inst.evaluator !== acc.id) return forbid("هذه المؤسسة ليست ضمن مؤسساتك");
+    if (!inScope(inst.team, inst.evaluator)) {
+      return forbid(
+        acc.role === "lead" ? "هذه المؤسسة خارج فريقك" : "هذه المؤسسة ليست ضمن مؤسساتك",
+      );
+    }
     if (body.year !== undefined && String(body.year) !== await currentYear()) {
       return forbid("الإدخال متاح في العام الجاري فقط");
     }
@@ -373,7 +409,12 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     for (const k of ks) {
       const r = body.kpi?.[String(k.n)];
       if (!r) continue;
-      const cell: { i?: string; j?: string; m?: string } = {};
+      const cell: { i?: string; j?: string; m?: string; note?: string } = {};
+      const note = String(r.note ?? "").trim();
+      if (note) {
+        if (note.length > 1000) return J({ error: `ملاحظة المؤشر ${k.n} أطول من 1000 حرف` }, 400);
+        cell.note = note.slice(0, 1000);
+      }
       for (const f of ["i", "j", "m"] as const) {
         const v = r[f];
         if (v === undefined || v === null || String(v).trim() === "") continue;
@@ -396,7 +437,11 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       axes: sc.axes,
       filled: sc.filled,
       status: sc.filled === sc.total ? "مكتمل" : (sc.filled ? "قيد التقييم" : "لم يبدأ"),
-      notes: String(body.notes ?? "").slice(0, 2000),
+      notes: String(body.notes ?? "").slice(0, 4000),
+      story: {
+        on: !!body.story?.on,
+        text: String(body.story?.text ?? "").slice(0, 3000),
+      },
       by: acc.id,
       at: new Date().toISOString(),
     };
@@ -423,9 +468,17 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     for (const t of teams) {
       const rows = inst.filter((i) => i.team === t).map((i) => {
         const e = evals[i.id];
-        if (e?.archived) return { ...i, axes: null, pct: null, status: "لم يبدأ" };
+        if (e?.archived) return { ...i, axes: null, pct: null, status: "لم يبدأ", nominated: false };
         const axes = e?.axes ?? null;
-        return { ...i, axes, pct: pctOf(i.team, axes), status: e?.status ?? "لم يبدأ" };
+        return {
+          ...i,
+          axes,
+          pct: pctOf(i.team, axes),
+          status: e?.status ?? "لم يبدأ",
+          nominated: !!e?.story?.on,
+          nomination: e?.story?.text ?? "",
+          nominatedBy: e?.story?.on ? e?.by ?? "" : "",
+        };
       }).filter((r) => r.status === "مكتمل" && r.pct !== null)
         .sort((a, b) => b.pct! - a.pct!).slice(0, TOP_N)
         .map((r) => ({ ...r, level: lvlOf(r.pct!).n }));
@@ -519,6 +572,49 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     return J({ ok: true });
   }
 
+  // ── إعادة تعيين جماعية: حسابات مختارة أو الكل ──
+  if (p === "/api/reset-passwords" && req.method === "POST") {
+    if (!can(acc, "accounts:write")) return forbid();
+    const body = await req.json().catch(() => ({}));
+    const pw = String(body.password ?? DEFAULT_PW);
+    if (pw.length < 8) return J({ error: "كلمة مرور 8 محارف فأكثر" }, 400);
+    const all = await listAccounts();
+    let targets = all;
+    if (!body.all) {
+      const ids: string[] = Array.isArray(body.ids) ? body.ids.map(String) : [];
+      if (!ids.length) return J({ error: "لم تُحدَّد حسابات" }, 400);
+      const known = new Set(all.map((a) => a.id));
+      const bad = ids.filter((i) => !known.has(i));
+      if (bad.length) return J({ error: `حسابات غير موجودة: ${bad.join(" · ")}` }, 404);
+      targets = all.filter((a) => ids.includes(a.id));
+    }
+    // الحساب الفني لا يعيد ضبط كلمة مروره ضمن دفعة، حتى لا يقفل نفسه خارج المنصة
+    const skipped = targets.filter((a) => a.id === acc.id).map((a) => a.id);
+    targets = targets.filter((a) => a.id !== acc.id);
+    for (const a of targets) {
+      const cur = (await kv.get(["account", a.id])).value as object | null;
+      if (!cur) continue;
+      const salt = newSalt();
+      await kv.set(["account", a.id], {
+        ...cur,
+        salt,
+        hash: await hashPw(pw, salt),
+        mustChange: true,
+      });
+      // إنهاء جلسات الحساب حتى لا تبقى جلسة مفتوحة بكلمة مرور ملغاة
+      for await (const e of kv.list<{ id: string }>({ prefix: ["session"] })) {
+        if (e.value.id === a.id) await kv.delete(e.key);
+      }
+    }
+    await audit(
+      acc.id,
+      "إعادة تعيين جماعية",
+      body.all ? "كل الحسابات" : `${targets.length} حساباً`,
+      `${targets.length} حساباً · افتراضية: ${pw === DEFAULT_PW ? "نعم" : "لا"}`,
+    );
+    return J({ ok: true, count: targets.length, skipped, isDefault: pw === DEFAULT_PW });
+  }
+
   // ── البيانات المركزية للمؤسسة: الطلبة والمعلمون والمواد ──
   if (p === "/api/central" && req.method === "GET") {
     const year = url.searchParams.get("year") || await currentYear();
@@ -540,14 +636,20 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     return J({ year, editable: yearIsEditable(year, await currentYear()), rows });
   }
   if (p === "/api/central" && req.method === "POST") {
-    if (!can(acc, "accounts:write")) return forbid("إدخال البيانات المركزية من صلاحية الحساب الفني");
+    if (!can(acc, "central:write")) return forbid("إدخال البيانات المركزية خارج صلاحيتك");
     const body = await req.json().catch(() => ({}));
     const year = String(body.year || await currentYear());
+    if (!yearIsEditable(year, await currentYear())) {
+      return forbid(`البيانات المركزية تُدخل للعام الجاري وحده — ${year} مغلق`);
+    }
     const items = Array.isArray(body.rows) ? body.rows : [];
     let n = 0;
     for (const r of items) {
       const inst = (await kv.get<Inst>(["inst", String(r.id)])).value;
       if (!inst) return J({ error: `المؤسسة ${r.id} غير موجودة` }, 404);
+      if (!inScope(inst.team, inst.evaluator)) {
+        return forbid(`المؤسسة ${r.id} خارج نطاقك`);
+      }
       const c: CentralData = { students: null, teachers: null, subjects: null };
       for (const f of ["students", "teachers", "subjects"] as const) {
         const v = r[f];
@@ -725,15 +827,101 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     return J({ ok: true });
   }
 
+  // ── مقيّمو الفريق: قائمة خفيفة لا تكشف بيانات الحسابات ──
+  if (p === "/api/evaluators") {
+    if (!can(acc, "assign")) return forbid();
+    const team = acc.role === "lead" ? acc.team : (url.searchParams.get("team") ?? "");
+    const rows = (await listAccounts())
+      .filter((a) => a.role === "eval" && (!team || a.team === team))
+      .map((a) => ({ id: a.id, name: a.name, team: a.team }));
+    return J({ team, rows });
+  }
+
+  // ── توزيع جماعي: دفعة تغييرات من شاشة التوزيع ──
+  if (p === "/api/assign-bulk" && req.method === "POST") {
+    if (!can(acc, "assign:write")) return forbid("توزيع المؤسسات خارج صلاحيتك");
+    const body = await req.json().catch(() => ({}));
+    const items: { instId: string; evaluator: string }[] = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) return J({ error: "لا تغييرات لحفظها" }, 400);
+    if (items.length > 400) return J({ error: "دفعة أكبر من المسموح" }, 400);
+    // تحقّق كامل قبل أي كتابة، حتى لا تُحفظ دفعة نصف صحيحة
+    const plan: { inst: Inst; to: string }[] = [];
+    for (const it of items) {
+      const inst = (await kv.get<Inst>(["inst", String(it.instId)])).value;
+      if (!inst) return J({ error: `المؤسسة ${it.instId} غير موجودة` }, 404);
+      if (!inScope(inst.team, inst.evaluator)) return forbid(`المؤسسة ${it.instId} خارج نطاقك`);
+      if (acc.role === "lead" && inst.team !== acc.team) {
+        return forbid(`المؤسسة ${it.instId} خارج فريقك`);
+      }
+      const ev = (await kv.get<Account>(["account", String(it.evaluator)])).value;
+      if (!ev || ev.role !== "eval") return J({ error: `المقيّم ${it.evaluator} غير موجود` }, 400);
+      if (ev.team !== inst.team) {
+        return J({ error: `المقيّم ${ev.id} ليس ضمن فريق «${inst.team}»` }, 400);
+      }
+      if (ev.id !== inst.evaluator) plan.push({ inst, to: ev.id });
+    }
+    for (const { inst, to } of plan) {
+      await kv.set(["inst", inst.id], { ...inst, evaluator: to });
+    }
+    await audit(acc.id, "توزيع المؤسسات", plan[0]?.inst.team ?? "", `${plan.length} مؤسسة`);
+    return J({ ok: true, count: plan.length });
+  }
+
+  // ── تغيير اسم المستخدم (معرّف الدخول) ──
+  if (p === "/api/account-rename" && req.method === "POST") {
+    if (!can(acc, "accounts:write")) return forbid("تغيير اسم المستخدم من صلاحية الحساب الفني");
+    const { id, newId } = await req.json().catch(() => ({}));
+    const from = String(id ?? "").trim(), to = String(newId ?? "").trim();
+    if (!/^[A-Za-z0-9._-]{2,24}$/.test(to)) {
+      return J({ error: "اسم المستخدم: حرفان إلى 24، حروف لاتينية وأرقام و . _ - فقط" }, 400);
+    }
+    if (from === to) return J({ error: "الاسم الجديد مطابق للحالي" }, 400);
+    const cur = (await kv.get<Account>(["account", from])).value;
+    if (!cur) return J({ error: "الحساب غير موجود" }, 404);
+    if ((await kv.get<Account>(["account", to])).value) {
+      return J({ error: `اسم المستخدم ${to} مستخدم بالفعل` }, 400);
+    }
+    await kv.set(["account", to], { ...cur, id: to });
+    await kv.delete(["account", from]);
+    // نقل إسناد المؤسسات وطلبات النقل المعلّقة إلى المعرّف الجديد
+    let moved = 0;
+    for (const i of await listInst()) {
+      if (i.evaluator === from) {
+        await kv.set(["inst", i.id], { ...i, evaluator: to });
+        moved++;
+      }
+    }
+    for (const t of await listTransfers()) {
+      if (t.status !== "معلّق") continue;
+      if (t.fromEval === from || t.toEval === from) {
+        await setTransfer({
+          ...t,
+          fromEval: t.fromEval === from ? to : t.fromEval,
+          toEval: t.toEval === from ? to : t.toEval,
+        });
+      }
+    }
+    // إبطال جلسات الحساب القديم حتى يدخل بالاسم الجديد
+    for await (const e of kv.list<{ id: string }>({ prefix: ["session"] })) {
+      if (e.value.id === from) await kv.delete(e.key);
+    }
+    await audit(acc.id, "تغيير اسم المستخدم", from, `← ${to} · ${moved} مؤسسة`);
+    return J({ ok: true, id: to, moved });
+  }
+
   // ── إسناد المؤسسات: تغيير المقيّم أو الفريق ──
   if (p === "/api/assign" && req.method === "POST") {
-    if (!can(acc, "accounts:write")) return forbid("إسناد المؤسسات من صلاحية الحساب الفني");
+    if (!can(acc, "assign:write")) return forbid("توزيع المؤسسات خارج صلاحيتك");
     const { instId, evaluator, team } = await req.json().catch(() => ({}));
     if (!instId || typeof instId !== "string") return J({ error: "المؤسسة غير محددة" }, 400);
     const inst = (await kv.get<Inst>(["inst", instId])).value;
     if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
     const nextTeam = team === undefined ? inst.team : String(team);
     if (!META.teams.includes(nextTeam)) return J({ error: "فريق غير معروف" }, 400);
+    // رئيس الفريق يوزّع داخل فريقه فقط ولا ينقل مؤسسة بين الفرق
+    if (acc.role === "lead" && (inst.team !== acc.team || nextTeam !== acc.team)) {
+      return forbid("توزيع المؤسسات داخل فريقك فقط");
+    }
     const nextEval = evaluator === undefined ? inst.evaluator : String(evaluator);
     const ev = (await kv.get<Account>(["account", nextEval])).value;
     if (!ev || ev.role !== "eval") return J({ error: "المقيّم غير موجود" }, 400);

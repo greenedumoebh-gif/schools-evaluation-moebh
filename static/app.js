@@ -3,11 +3,13 @@ const $ = (s) => document.querySelector(s);
 const AXC = { 1: "#1E7145", 2: "#2C6FB5", 3: "#BA7517", 4: "#0F6E56" };
 const SC = { "مكتمل": "#1E7145", "قيد التقييم": "#BA7517", "لم يبدأ": "#C0392B" };
 const SECS = {
-  mine: ["مؤسساتي", "المؤسسات المسندة إليك وحالة تقييمها", "▤"],
+  mine: ["المؤسسات والتقييم", "المؤسسات ضمن نطاقك وحالة تقييمها", "▤"],
   team: ["لوحة الفريق", "نسب الإنجاز لكل مقيّم", "◧"],
   stats: ["الإحصاءات", "حسب المرحلة والجنس ونسب التقدم", "📊"],
   top: ["أعلى 10 وقصص النجاح", "اختيار 3 مؤسسات للكتابة عنها", "★"],
   reports: ["التقارير", "ملخص الفريق والتصدير", "▦"],
+  assign: ["توزيع المؤسسات", "توزيع مؤسسات الفريق على المقيّمين", "⇲"],
+  central: ["بيانات المؤسسات", "أعداد الطلبة والمعلمين والمواد لهذا العام", "▦"],
   transfers: ["طلبات النقل", "نقل المؤسسات بين المقيّمين داخل الفريق", "⇄"],
   tech: ["الحساب الفني", "البيانات المركزية والحسابات والمؤشرات", "⚙"],
 };
@@ -88,6 +90,7 @@ async function boot() {
   $("#brandVer").textContent = `الإصدار ${META.version} · ${META.released}`;
   $("#phSub").textContent = `إدارة المنشآت التعليمية · الإصدار ${META.version} · ${VYEAR}`;
   buildYearTabs();
+  buildViewBar();
   $("#who").innerHTML = `<div class="n">${esc(ME.name)}</div><div class="r">${esc(ME.title)}${
     ME.team ? " · " + esc(ME.team) : ""
   }</div><button id="soBtn">تسجيل الخروج</button>`;
@@ -97,6 +100,36 @@ async function boot() {
   if (ME.mustChange) setTimeout(() => openPw(true), 400);
   await render();
 }
+/** لافتة معاينة حساب آخر — دائمة وواضحة حتى لا يُخلط بين الحسابين. */
+function buildViewBar() {
+  let bar = document.getElementById("viewbar");
+  if (!ME.viewAs) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "viewbar";
+    bar.className = "viewbar";
+    document.querySelector(".topbar").before(bar);
+  }
+  bar.innerHTML = `<span>وضع معاينة — أنت ترى المنصة بعين
+    <b>${esc(ME.id)} · ${esc(ME.name)}</b> (${esc(ME.title)}).
+    الكتابة معطَّلة، والحساب الأصلي ${esc(ME.viewAs.byName)}.</span>
+    <button class="btn sm" id="vbExit">إنهاء المعاينة</button>`;
+  $("#vbExit").onclick = () => viewAs(null);
+}
+async function viewAs(id) {
+  try {
+    await api("/api/view-as", { method: "POST", body: { id } });
+    VYEAR = null;
+    SEC = null;
+    location.reload();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
 function buildYearTabs() {
   let bar = document.getElementById("yearbar");
   if (!bar) {
@@ -150,7 +183,7 @@ async function render() {
   $("#content").innerHTML =
     `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
   try {
-    if (["mine", "team", "stats", "reports"].includes(SEC)) {
+    if (["mine", "team", "stats", "reports", "central", "assign"].includes(SEC)) {
       const d = await api("/api/institutions?year=" + encodeURIComponent(VYEAR));
       ROWS = d.rows;
       EDITABLE = d.editable;
@@ -172,6 +205,8 @@ async function render() {
       stats: rStats,
       top: rTop,
       reports: rReports,
+      assign: rAssign,
+      central: rCentral,
       transfers: rTransfers,
       tech: rTech,
     };
@@ -229,8 +264,11 @@ function rMine() {
        النتائج معروضة كما وردت في الملفات المركزية، وحُسبت بالمعادلة اللوغاريتمية السابقة
        ومسطرتها. لا تُقارَن بنقاط المنصة ولا يُدخل فيها تقييم.</div>`
     : "";
-  return `<h3 class="st">مؤسساتي</h3>
-  <p class="sl">${esc(ME.name)} · ${esc(ME.team ?? "")} — ${ROWS.length} مؤسسة مسندة إليك.</p>${arch}
+  const isLead = ME.role === "lead";
+  return `<h3 class="st">${isLead ? "مؤسسات الفريق والتقييم" : "مؤسساتي"}</h3>
+  <p class="sl">${esc(ME.name)} · ${esc(ME.team ?? "")} — ${ROWS.length} مؤسسة ${
+    isLead ? "ضمن فريقك، ولك إدخال التقييم وتعديله في أيٍّ منها" : "مسندة إليك"
+  }.</p>${arch}
   <div class="kpis">
    <div class="kpi"><div class="lbl">مؤسسة مسندة</div><div class="val">${ROWS.length}</div></div>
    <div class="kpi"><div class="lbl">مكتملة</div><div class="val">${d.length}</div></div>
@@ -249,7 +287,7 @@ function rMine() {
   </div>
   <div class="tbl"><table><thead><tr><th style="width:78px">الرمز</th><th>المؤسسة</th>
    <th style="width:120px">المرحلة</th><th style="width:70px">الجنس</th><th style="width:62px">الطلبة</th>
-   <th style="width:110px">التصنيف</th>
+   <th style="width:110px">التصنيف</th>${ME.role === "lead" ? '<th style="width:80px">المقيّم</th>' : ""}
    <th style="width:105px">الحالة</th><th style="width:72px">النتيجة</th><th style="width:115px">التقدير</th>
    <th style="width:80px"></th></tr></thead><tbody>` +
     ROWS.map((x) =>
@@ -365,7 +403,16 @@ async function openEval(id) {
           ? `<b style="color:var(--amber)">مضبوط</b> · الأصل ${fmt(k.tgtBase)}`
           : (k.assumed ? `<b style="color:var(--red)">مُفترض</b> · حسب المرحلة` : `من الخطة`)
       }</div></div>
-        <div class="fres" id="r${k.n}"></div></div></div>`;
+        <div class="fres" id="r${k.n}"></div></div>
+        <div class="knote">
+          <button type="button" class="notebtn" data-note="${k.n}">${
+        EV.raw[k.n]?.note ? "ملاحظة \u2713" : "إضافة ملاحظة"
+      }</button>
+          <textarea class="noteta" id="nt${k.n}" rows="2" data-k="${k.n}" data-f="note"
+            placeholder="ملاحظة اختيارية على هذا المؤشر" ${EV.raw[k.n]?.note ? "" : "hidden"}>${
+        esc(EV.raw[k.n]?.note ?? "")
+      }</textarea>
+        </div></div>`;
     });
     h += `</div>`;
   });
@@ -374,8 +421,22 @@ async function openEval(id) {
    <div id="evSum"></div>
    <h4 class="blk">الأداء التراكمي والدورات السابقة</h4>
    <div id="evHist"><div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div></div>
-   <label style="font-size:12px;font-weight:700;color:var(--muted);display:block;margin:14px 0 5px">ملاحظات المقيّم</label>
-   <textarea id="evNotes" rows="3">${esc(x.notes ?? "")}</textarea>
+   <h4 class="blk">ملاحظات عامة على أداء المؤسسة وتقييمها</h4>
+   <textarea id="evNotes" rows="5"
+     placeholder="ملاحظة اختيارية: ما لوحظ في الزيارة، وما يفسّر النتيجة، وما يُقترح للمتابعة">${
+    esc(x.notes ?? "")
+  }</textarea>
+   <h4 class="blk">قصة نجاح</h4>
+   <label class="ckrow"><input type="checkbox" id="stOn" ${x.story?.on ? "checked" : ""}>
+     <span>ترشيح هذه المؤسسة كقصة نجاح</span></label>
+   <div id="stBox" ${x.story?.on ? "" : "hidden"}>
+     <p class="sl">الترشيح توصية منك؛ اعتماد قصص النجاح من رئيس الفريق وبحد أقصى
+       ${META.maxPicks} مؤسسات لكل فريق من ضمن الأعلى أداءً.</p>
+     <textarea id="stText" rows="5"
+       placeholder="ما الذي يستحق أن يُروى؟ الممارسة، وما تغيّر فعلاً، والنتائج المقيسة إن وُجدت">${
+    esc(x.story?.text ?? "")
+  }</textarea>
+   </div>
    <div style="display:flex;gap:9px;margin-top:15px;flex-wrap:wrap;align-items:center">
      ${EDITABLE ? '<button class="btn" id="evSave">حفظ التقييم</button>' : ""}
      <button class="btn ghost" id="evCancel">إلغاء</button>
@@ -393,19 +454,34 @@ async function openEval(id) {
     $("#modalBody").querySelector(".mbody").prepend(box);
   }
   if (!EDITABLE) {
-    $("#modalBody").querySelectorAll("[data-k], #evNotes").forEach((el) => el.disabled = true);
+    $("#modalBody").querySelectorAll("[data-k], #evNotes, #stOn, #stText").forEach((el) =>
+      el.disabled = true
+    );
   }
   $("#modalBody").querySelectorAll("[data-k]").forEach((el) => {
     const ev = el.tagName === "SELECT" ? "onchange" : "oninput";
     el[ev] = () => {
       const n = el.dataset.k, f = el.dataset.f;
       EV.raw[n] = EV.raw[n] || {};
-      if (el.value === "") delete EV.raw[n][f];
+      if (el.value === "" || (f === "note" && el.value.trim() === "")) delete EV.raw[n][f];
       else EV.raw[n][f] = el.value;
       if (!Object.keys(EV.raw[n]).length) delete EV.raw[n];
-      evCalc();
+      if (f !== "note") evCalc();
     };
   });
+  $("#modalBody").querySelectorAll("[data-note]").forEach((b) =>
+    b.onclick = () => {
+      const ta = $("#nt" + b.dataset.note);
+      ta.hidden = !ta.hidden;
+      if (!ta.hidden) ta.focus();
+      b.textContent = ta.value.trim() ? "ملاحظة ✓" : (ta.hidden ? "إضافة ملاحظة" : "إخفاء الملاحظة");
+    }
+  );
+  if ($("#stOn")) {
+    $("#stOn").onchange = () => {
+      $("#stBox").hidden = !$("#stOn").checked;
+    };
+  }
   $("#mClose").onclick = $("#evCancel").onclick = () => $("#modal").classList.remove("on");
   if ($("#evSave")) $("#evSave").onclick = evSave;
   evCalc();
@@ -585,7 +661,12 @@ async function evSave() {
   try {
     const r = await api("/api/evaluation", {
       method: "POST",
-      body: { instId: EV.inst.id, kpi: EV.raw, notes: $("#evNotes").value },
+      body: {
+        instId: EV.inst.id,
+        kpi: EV.raw,
+        notes: $("#evNotes").value,
+        story: { on: $("#stOn").checked, text: $("#stText").value },
+      },
     });
     $("#modal").classList.remove("on");
     toast(`حُفظ التقييم — ${r.status} · ${r.filled} من ${r.total} مؤشراً`);
@@ -787,7 +868,9 @@ function statsCharts() {
 function rTop() {
   const canPick = ME.role !== "eval";
   let h = `<h3 class="st">أعلى 10 وقصص النجاح</h3>
-  <p class="sl">لكل فريق أن يختار حتى <b>${META.maxPicks} مؤسسات</b> من أعلى ${META.topN} في فريقه.</p>`;
+  <p class="sl">لكل فريق أن يختار حتى <b>${META.maxPicks} مؤسسات</b> من أعلى ${META.topN} في فريقه.
+    الوسم <span class="pill purple">مرشَّحة</span> يعني أن المقيّم رشّحها في شاشة التقييم —
+    توصية لا اختياراً، والاعتماد من رئيس الفريق.</p>`;
   TOP.teams.forEach((t) => {
     h += `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:11px">
@@ -803,7 +886,11 @@ function rTop() {
       t.rows.map((x, i) => {
         const on = t.picks.includes(x.id);
         return `<tr${on ? ' style="background:var(--purple-l)"' : ""}><td><b>${i + 1}</b></td>
-        <td class="r">${esc(x.name)}</td><td>${esc(x.stage ?? "—")}</td><td><b>${x.pct}%</b></td>
+        <td class="r">${esc(x.name)}${
+          x.nominated
+            ? ` <span class="pill purple" title="${esc(x.nomination).slice(0, 200)}">مرشَّحة</span>`
+            : ""
+        }</td><td>${esc(x.stage ?? "—")}</td><td><b>${x.pct}%</b></td>
         <td><span class="pill" style="background:${lvlColor(x.level)};color:#fff">${x.level}</span></td>
         <td>${
           canPick
@@ -981,13 +1068,28 @@ async function rTech() {
       ).join("") + `</tr>`
     ).join("") + `</tbody></table></div>
   <h4 class="blk">الحسابات</h4>
-  <p class="sl">عدّل الاسم والمسمى والفريق ثم اضغط «حفظ» في السطر نفسه. تغيير الفريق لا ينقل المؤسسات
-    المسندة للحساب — الإسناد يُدار من الجدول التالي.</p>
-  <div class="tbl"><table><thead><tr><th style="width:70px">الرمز</th><th style="min-width:170px">الاسم</th>
-   <th style="min-width:170px">المسمى</th><th style="width:130px">الفريق</th>
-   <th style="width:100px">كلمة المرور</th><th style="width:160px"></th></tr></thead><tbody>` +
+  <p class="sl">«معاينة» تفتح المنصة بعين ذلك الحساب لتجربة شاشاته وصلاحياته.
+    الكتابة معطَّلة أثناء المعاينة حتى لا تُنسب بيانات لحساب لم يُدخلها،
+    وكل بدء وإنهاء مسجَّل في سجل التدقيق.<br>
+    عدّل الاسم والمسمى والفريق ثم اضغط «حفظ» في السطر نفسه. تغيير الفريق لا ينقل المؤسسات
+    المسندة للحساب — الإسناد يُدار من الجدول التالي.<br>
+    لتغيير <b>اسم المستخدم</b> عدّل خانة الرمز ثم اضغط «اسم المستخدم»: تُنقل مؤسساته وطلباته
+    المعلّقة إلى الاسم الجديد، وتُنهى جلساته فيدخل بالاسم الجديد.</p>
+  <div style="display:flex;gap:9px;margin-bottom:11px;flex-wrap:wrap;align-items:center">
+    <button class="btn" id="pwSel">إعادة تعيين المحدد</button>
+    <button class="btn ghost" id="pwAll">إعادة تعيين كل الحسابات</button>
+    <span style="font-size:11.5px;color:var(--muted);font-weight:700">
+      الافتراضية <b class="mono">${esc(META.defaultPw ?? "12345678")}</b>
+      · تُنهى الجلسات ويُلزَم صاحبها بتغييرها عند أول دخول</span>
+  </div>
+  <div class="tbl"><table><thead><tr>
+   <th style="width:36px"><input type="checkbox" id="pwCkAll" title="تحديد الكل"></th>
+   <th style="width:96px">اسم المستخدم</th><th style="min-width:160px">الاسم</th>
+   <th style="min-width:160px">المسمى</th><th style="width:125px">الفريق</th>
+   <th style="width:92px">كلمة المرور</th><th style="width:330px"></th></tr></thead><tbody>` +
     A.map((a) =>
-      `<tr><td class="mono">${a.id}</td>
+      `<tr><td><input type="checkbox" class="pwck" value="${a.id}"></td>
+      <td><input class="mono" data-rn="${a.id}" value="${a.id}" style="width:88px"></td>
       <td class="r"><input data-ac="${a.id}" data-af="name" value="${esc(a.name)}" style="width:100%"></td>
       <td><input data-ac="${a.id}" data-af="title" value="${esc(a.title)}" style="width:100%"></td>
       <td>${
@@ -1001,7 +1103,9 @@ async function rTech() {
           : '<span class="pill" style="background:var(--green-l);color:var(--green-d)">مُغيَّرة</span>'
       }</td>
       <td style="white-space:nowrap"><button class="btn sm" data-acsave="${a.id}">حفظ</button>
-      <button class="btn sm ghost" data-reset="${a.id}">كلمة المرور</button></td></tr>`
+      <button class="btn sm ghost" data-rnsave="${a.id}">اسم المستخدم</button>
+      <button class="btn sm ghost" data-reset="${a.id}">كلمة المرور</button>
+      <button class="btn sm ghost" data-viewas="${a.id}">معاينة</button></td></tr>`
     ).join("") + `</tbody></table></div>
   <h4 class="blk">البيانات المركزية للمؤسسات — ${esc(VYEAR)}</h4>
   <p class="sl">عدد الطلبة والمعلمين والمواد يُدخل هنا مرة واحدة لكل مؤسسة في العام،
@@ -1198,33 +1302,235 @@ async function cdRender(team) {
       <button class="btn" id="cdSave">حفظ بيانات ${esc(team)}</button></div>`;
   }
   box.innerHTML = h;
-  const rule = META.sizeRule[team === "رياض الأطفال" ? "kg" : "school"];
-  box.querySelectorAll('[data-cdf="students"]').forEach((i) =>
-    i.oninput = () => {
-      const v = Number(i.value);
-      const cell = $("#cds" + i.dataset.cdi);
-      const hit = i.value === "" ? null : rule.find(([, a, b]) => v >= a && (b === null || v <= b));
-      cell.textContent = hit ? hit[0] : "—";
+  wireCentral(box, () => CDTEAM);
+}
+
+/* ── توزيع المؤسسات على المقيّمين ── */
+let ASG = null; // { team, evals, rows, map, orig }
+
+async function rAssign() {
+  const team = ME.role === "lead" ? ME.team : (ASG?.team ?? META.teams[0]);
+  const evals = (await api("/api/evaluators?team=" + encodeURIComponent(team))).rows
+    .map((a) => a.id);
+  const rows = ROWS.filter((r) => r.team === team);
+  const map = {};
+  rows.forEach((r) => map[r.id] = r.evaluator);
+  ASG = { team, evals, rows, map, orig: { ...map } };
+  setTimeout(wireAssign, 0);
+  return asgHtml();
+}
+
+function asgHtml() {
+  const { evals, rows, map, orig } = ASG;
+  const pending = rows.filter((r) => map[r.id] !== orig[r.id]).length;
+  const tm = META.teamMeta[ASG.team];
+  let h = `<h3 class="st">توزيع المؤسسات على المقيّمين</h3>
+  <p class="sl">${esc(tm.label)} · رمز ${tm.code} — ${rows.length} مؤسسة على ${evals.length} مقيّمين.
+    اسحب بطاقة المؤسسة إلى عمود المقيّم، أو غيّر المقيّم من القائمة داخل البطاقة.
+    لا يُحفظ شيء قبل الضغط على «حفظ التوزيع».</p>
+  <div class="asgbar">
+    <button class="btn" id="asgSave" ${pending ? "" : "disabled"}>حفظ التوزيع${
+    pending ? ` (${pending})` : ""
+  }</button>
+    <button class="btn ghost" id="asgReset" ${pending ? "" : "disabled"}>تراجع</button>
+    <button class="btn ghost" id="asgEven">اقتراح توزيع متوازن</button>
+    <span class="asgnote${pending ? " on" : ""}">${
+    pending ? `${pending} تغييراً غير محفوظ` : "لا تغييرات معلّقة"
+  }</span>
+  </div>
+  <div class="asgcols">`;
+  evals.forEach((e) => {
+    const mine = rows.filter((r) => map[r.id] === e);
+    h += `<div class="asgcol">
+      <div class="asghead"><b class="mono">${e}</b><span>${mine.length} مؤسسة</span></div>
+      <div class="asgdrop" data-col="${e}">` +
+      mine.map((r) => {
+        const moved = map[r.id] !== orig[r.id];
+        return `<div class="asgcard${moved ? " moved" : ""}" draggable="true" data-inst="${r.id}">
+          <div class="ac-name">${esc(r.name)}</div>
+          <div class="ac-meta"><span class="mono">${r.id}</span> · ${esc(r.stage ?? "—")}
+            · <span class="pill" style="background:${SC[r.status]}22;color:${
+          SC[r.status]
+        }">${r.status}</span></div>
+          <select data-mv="${r.id}">` +
+          evals.map((x) => `<option value="${x}" ${x === e ? "selected" : ""}>${x}</option>`).join("") +
+          `</select></div>`;
+      }).join("") +
+      `</div></div>`;
+  });
+  return h + `</div>`;
+}
+
+function asgRefresh() {
+  $("#content").innerHTML = asgHtml();
+  wireAssign();
+}
+
+function wireAssign() {
+  if (!ASG || SEC !== "assign") return;
+  let dragId = null;
+  document.querySelectorAll(".asgcard").forEach((c) => {
+    c.ondragstart = (e) => {
+      dragId = c.dataset.inst;
+      c.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", dragId);
+    };
+    c.ondragend = () => c.classList.remove("dragging");
+  });
+  document.querySelectorAll(".asgdrop").forEach((z) => {
+    z.ondragover = (e) => {
+      e.preventDefault();
+      z.classList.add("over");
+    };
+    z.ondragleave = () => z.classList.remove("over");
+    z.ondrop = (e) => {
+      e.preventDefault();
+      z.classList.remove("over");
+      const id = dragId || e.dataTransfer.getData("text/plain");
+      dragId = null;
+      if (!id) return;
+      ASG.map[id] = z.dataset.col;
+      asgRefresh();
+    };
+  });
+  document.querySelectorAll("[data-mv]").forEach((sel) =>
+    sel.onchange = () => {
+      ASG.map[sel.dataset.mv] = sel.value;
+      asgRefresh();
     }
   );
-  if ($("#cdSave")) {
-    $("#cdSave").onclick = async () => {
-      const map = {};
-      box.querySelectorAll("[data-cdi]").forEach((i) => {
-        map[i.dataset.cdi] = map[i.dataset.cdi] || { id: i.dataset.cdi };
-        map[i.dataset.cdi][i.dataset.cdf] = i.value;
-      });
-      try {
-        const r = await api("/api/central", {
-          method: "POST",
-          body: { year: VYEAR, rows: Object.values(map) },
-        });
-        toast(`حُفظت بيانات ${r.count} مؤسسة`);
-      } catch (e) {
-        toast(e.message, true);
-      }
-    };
+  $("#asgReset").onclick = () => {
+    ASG.map = { ...ASG.orig };
+    asgRefresh();
+  };
+  $("#asgEven").onclick = () => {
+    // اقتراح بالتناوب مع الحفاظ على ترتيب المؤسسات، يراجعه القائد قبل الحفظ
+    ASG.rows.forEach((r, i) => ASG.map[r.id] = ASG.evals[i % ASG.evals.length]);
+    asgRefresh();
+    toast("اقتراح توزيع متوازن — راجعه ثم احفظ");
+  };
+  $("#asgSave").onclick = async () => {
+    const items = ASG.rows
+      .filter((r) => ASG.map[r.id] !== ASG.orig[r.id])
+      .map((r) => ({ instId: r.id, evaluator: ASG.map[r.id] }));
+    if (!items.length) return;
+    try {
+      const r = await api("/api/assign-bulk", { method: "POST", body: { items } });
+      toast(`حُفظ توزيع ${r.count} مؤسسة`);
+      ASG = null;
+      await render();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
+/** إعادة تعيين كلمات المرور — للمحدد أو للجميع، بالافتراضية أو بكلمة يختارها الفني. */
+async function resetPasswords(all) {
+  const ids = [...document.querySelectorAll(".pwck:checked")].map((c) => c.value);
+  if (!all && !ids.length) return toast("حدّد حساباً واحداً على الأقل", true);
+  const n = all ? "كل الحسابات" : `${ids.length} حساباً`;
+  const pw = prompt(
+    `إعادة تعيين كلمة المرور لـ${n}.\n` +
+      `اتركها كما هي للافتراضية، أو اكتب كلمة مرور أخرى (8 محارف فأكثر).`,
+    META.defaultPw ?? "12345678",
+  );
+  if (pw === null) return;
+  if (pw.length < 8) return toast("كلمة مرور 8 محارف فأكثر", true);
+  if (!confirm(`تأكيد: ${n} ستُنهى جلساتهم ويُطلب منهم تغيير كلمة المرور عند أول دخول.`)) return;
+  try {
+    const r = await api("/api/reset-passwords", {
+      method: "POST",
+      body: all ? { all: true, password: pw } : { ids, password: pw },
+    });
+    toast(
+      `أُعيد تعيين ${r.count} حساباً` +
+        (r.skipped.length ? ` · حسابك مستثنى` : "") +
+        (r.isDefault ? " · بالكلمة الافتراضية" : ""),
+    );
+    await render();
+  } catch (e) {
+    toast(e.message, true);
   }
+}
+
+/* ── البيانات المركزية للمؤسسات ── */
+async function rCentral() {
+  const d = await api("/api/central?year=" + encodeURIComponent(VYEAR));
+  const rows = d.rows;
+  const ro = !d.editable;
+  const miss = rows.filter((r) => r.students === null || r.teachers === null || r.subjects === null);
+  let h = `<h3 class="st">بيانات المؤسسات — ${esc(VYEAR)}</h3>
+  <p class="sl">أعداد الطلبة والمعلمين والمواد تُدخل مرة واحدة لكل مؤسسة، وتُسحب تلقائياً
+    كمقام في المؤشرات التي تعتمد عليها، ويُشتق منها تصنيف حجم المؤسسة.</p>
+  <div class="tip amber"><b>هذه الأعداد تخصّ عاماً دراسياً بعينه.</b>
+    كل عام جديد يبدأ بخانات فارغة ويستلزم تحديثها، فالأعداد تتغيّر من عام لآخر
+    ولا تُنقل تلقائياً.</div>
+  ${ro ? `<div class="tip red">${esc(VYEAR)} ليس العام الجاري — عرض فقط.</div>` : ""}
+  <div class="kpis">
+    <div class="kpi"><div class="lbl">مؤسسات في نطاقك</div><div class="val">${rows.length}</div></div>
+    <div class="kpi ${miss.length ? "amber" : ""}"><div class="lbl">بيانات ناقصة</div>
+      <div class="val">${miss.length}</div></div>
+    <div class="kpi"><div class="lbl">مكتملة</div><div class="val">${rows.length - miss.length}</div></div>
+  </div>
+  <div class="tbl"><table><thead><tr><th style="width:70px">الرمز</th><th>المؤسسة</th>
+    <th style="width:120px">المرحلة</th>
+    <th style="width:110px">الطلبة</th><th style="width:110px">المعلمون</th>
+    <th style="width:110px">المواد</th><th style="width:150px">التصنيف المشتق</th></tr></thead><tbody>`;
+  rows.forEach((r) => {
+    const f = (k) =>
+      `<input type="number" min="0" step="1" style="width:92px" data-cdi="${r.id}" data-cdf="${k}"
+        value="${r[k] ?? ""}" ${ro ? "disabled" : ""}>`;
+    h += `<tr><td class="mono">${r.id}</td><td class="r">${esc(r.name)}</td>
+      <td>${esc(r.stage ?? "—")}</td>
+      <td>${f("students")}</td><td>${f("teachers")}</td><td>${f("subjects")}</td>
+      <td id="cds${r.id}">${
+      r.size
+        ? esc(r.size)
+        : `<span style="color:var(--muted)">${r.sizeSource ? esc(r.sizeSource) + " (سابق)" : "—"}</span>`
+    }</td></tr>`;
+  });
+  h += `</tbody></table></div>`;
+  if (!ro) {
+    h += `<div style="display:flex;gap:9px;margin-top:12px">
+      <button class="btn" id="cdSaveAll">حفظ البيانات</button></div>`;
+  }
+  setTimeout(() => wireCentral(document), 0);
+  return h;
+}
+
+/** ربط خانات البيانات المركزية داخل أي حاوية: اشتقاق التصنيف حياً ثم الحفظ. */
+function wireCentral(root, teamOf) {
+  const rule = (team) => META.sizeRule[team === "رياض الأطفال" ? "kg" : "school"];
+  root.querySelectorAll('[data-cdf="students"]').forEach((i) => {
+    i.oninput = () => {
+      const cell = document.getElementById("cds" + i.dataset.cdi);
+      if (!cell) return;
+      const team = teamOf ? teamOf() : (ROWS.find((r) => r.id === i.dataset.cdi)?.team ?? "");
+      const v = Number(i.value);
+      const hit = i.value === "" ? null : rule(team).find(([, a, b]) => v >= a && (b === null || v <= b));
+      cell.textContent = hit ? hit[0] : "—";
+    };
+  });
+  const btn = root.querySelector("#cdSaveAll") || root.querySelector("#cdSave");
+  if (!btn) return;
+  btn.onclick = async () => {
+    const map = {};
+    root.querySelectorAll("[data-cdi]").forEach((i) => {
+      map[i.dataset.cdi] = map[i.dataset.cdi] || { id: i.dataset.cdi };
+      map[i.dataset.cdi][i.dataset.cdf] = i.value;
+    });
+    try {
+      const r = await api("/api/central", {
+        method: "POST",
+        body: { year: VYEAR, rows: Object.values(map) },
+      });
+      toast(`حُفظت بيانات ${r.count} مؤسسة للعام ${VYEAR}`);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
 }
 
 /* ── طلبات النقل ── */
@@ -1415,6 +1721,7 @@ function openPw(force = false) {
 
 /* ── ربط الأحداث ── */
 function wire() {
+  if (SEC === "assign" && ASG) wireAssign();
   document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openEval(b.dataset.open));
   document.querySelectorAll("[data-move]").forEach((b) => b.onclick = () => openMove(b.dataset.move));
   document.querySelectorAll("[data-tok]").forEach((b) => b.onclick = () => trDecide(b.dataset.tok, true));
@@ -1443,6 +1750,30 @@ function wire() {
     document.querySelectorAll("#asTabs [data-as]").forEach((b) => b.onclick = () => asRender(b.dataset.as));
     asRender(ASTEAM ?? META.teams[0]);
   }
+  document.querySelectorAll("[data-viewas]").forEach((b) => b.onclick = () => viewAs(b.dataset.viewas));
+  if ($("#pwCkAll")) {
+    $("#pwCkAll").onchange = () =>
+      document.querySelectorAll(".pwck").forEach((c) => c.checked = $("#pwCkAll").checked);
+    $("#pwSel").onclick = () => resetPasswords(false);
+    $("#pwAll").onclick = () => resetPasswords(true);
+  }
+  document.querySelectorAll("[data-rnsave]").forEach((b) =>
+    b.onclick = async () => {
+      const id = b.dataset.rnsave;
+      const inp = document.querySelector(`[data-rn="${id}"]`);
+      const newId = inp ? inp.value.trim() : "";
+      if (newId === id) return toast("اسم المستخدم لم يتغيّر", true);
+      if (!confirm(`تغيير اسم المستخدم من ${id} إلى ${newId}؟ ستُنهى جلساته الحالية.`)) return;
+      try {
+        const r = await api("/api/account-rename", { method: "POST", body: { id, newId } });
+        toast(`صار اسم المستخدم ${r.id} · نُقلت ${r.moved} مؤسسة`);
+        await render();
+      } catch (e) {
+        toast(e.message, true);
+        if (inp) inp.value = id;
+      }
+    }
+  );
   document.querySelectorAll("[data-acsave]").forEach((b) =>
     b.onclick = async () => {
       const id = b.dataset.acsave,

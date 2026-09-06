@@ -64,10 +64,10 @@ chk((await login("NOPE")).status === 401, "حساب غير موجود يُرفض
 const anon = await fetch(`${BASE}/api/institutions`);
 chk(anon.status === 401, "طلب بلا جلسة يُرفض (401)");
 
-const ev1 = await login("Z1-1");
-const ev2 = await login("Z1-2");
-const lead1 = await login("Z1-L");
-const lead2 = await login("Z2-L");
+let ev1 = await login("Z1-1");
+let ev2 = await login("Z1-2");
+let lead1 = await login("Z1-L");
+let lead2 = await login("Z2-L");
 const tech = await login("TECH");
 chk([ev1, ev2, lead1, lead2, tech].every((x) => x.status === 200 && x.sid), "دخول خمسة حسابات");
 
@@ -122,11 +122,18 @@ const foreign = await call(ev2.sid, "/api/evaluation", "POST", {
   kpi: rawFor(defs, 10),
 });
 chk(foreign.status === 403, "مقيّم آخر لا يستطيع تعديل مؤسسة ليست له (403)");
-const leadWrite = await call(lead1.sid, "/api/evaluation", "POST", {
+const leadWrite = await (await call(lead1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: rawFor(defs, 60),
+})).json();
+chk(leadWrite.ok, "رئيس الفريق يُدخل التقييم في أي مؤسسة بفريقه");
+const leadOut = await call(lead2.sid, "/api/evaluation", "POST", {
   instId: mine.id,
   kpi: rawFor(defs, 5),
 });
-chk(leadWrite.status === 403, "رئيس الفريق لا يُدخل تقييماً (403)");
+chk(leadOut.status === 403, "رئيس فريق آخر لا يُدخل تقييماً (403)");
+const leadRows = (await (await call(lead1.sid, "/api/institutions")).json()).rows;
+chk(leadRows.length === 56, `رئيس الفريق يرى كل مؤسسات فريقه (${leadRows.length})`);
 const clamp = await (await call(ev1.sid, "/api/evaluation", "POST", {
   instId: mine.id,
   kpi: rawFor(defs, 300),
@@ -248,7 +255,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(/^\d+\.\d+\.\d+$/.test(meta0.version), `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.5.0", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;
@@ -275,8 +282,8 @@ chk(
 
 console.log("\n■ البيانات المركزية");
 chk(
-  (await call(ev1.sid, "/api/central", "POST", { rows: [] })).status === 403,
-  "المقيّم لا يدخل البيانات المركزية (403)",
+  (await call(ev1.sid, "/api/central", "POST", { rows: [] })).status === 200,
+  "المقيّم يصل إلى البيانات المركزية لنطاقه",
 );
 const cdSave = await (await call(tech.sid, "/api/central", "POST", {
   rows: [{ id: mine.id, students: 850, teachers: 40, subjects: 10 }],
@@ -322,6 +329,287 @@ chk(
   forced.kpiPct["8"] === 50,
   `المقام المركزي 40 يحكم لا المُرسَل 1 → ${forced.kpiPct["8"]}% (16÷40=40% من هدف 80)`,
 );
+
+console.log("\n■ توزيع المؤسسات على المقيّمين");
+chk(
+  (await call(ev1.sid, "/api/assign-bulk", "POST", { items: [] })).status === 403,
+  "المقيّم لا يوزّع المؤسسات (403)",
+);
+const own = (await (await call(lead1.sid, "/api/institutions")).json()).rows;
+const origAsg = own.map((r: { id: string; evaluator: string }) => ({
+  instId: r.id,
+  evaluator: r.evaluator,
+}));
+// نتجنّب مؤسسة الاختبارات الرئيسية حتى تبقى مسندة إلى Z1-1
+const movable = own.filter((r: { id: string }) => r.id !== mine.id);
+const pick3 = movable.slice(0, 3).map((r: { id: string }) => ({
+  instId: r.id,
+  evaluator: "Z1-5",
+}));
+const bulk = await (await call(lead1.sid, "/api/assign-bulk", "POST", { items: pick3 })).json();
+chk(bulk.ok && bulk.count >= 1, `رئيس الفريق يحفظ دفعة توزيع (${bulk.count})`);
+const after3 = (await (await call(lead1.sid, "/api/institutions")).json()).rows
+  .filter((r: { id: string; evaluator: string }) =>
+    pick3.some((p: { instId: string }) => p.instId === r.id) && r.evaluator === "Z1-5"
+  );
+chk(after3.length === 3, `المؤسسات الثلاث صارت لـ Z1-5 (${after3.length})`);
+chk(
+  (await call(lead2.sid, "/api/assign-bulk", "POST", { items: pick3 })).status === 403,
+  "رئيس فريق آخر لا يوزّع مؤسسات ليست لفريقه (403)",
+);
+chk(
+  (await call(lead1.sid, "/api/assign-bulk", "POST", {
+    items: [{ instId: own[0].id, evaluator: "Z2-1" }],
+  })).status === 400,
+  "إسناد لمقيّم من فريق آخر يُرفض (400)",
+);
+// دفعة نصفها خاطئ لا تُحفظ إطلاقاً
+const evBefore = (await (await call(lead1.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === movable[5].id).evaluator;
+const half = await call(lead1.sid, "/api/assign-bulk", "POST", {
+  items: [{ instId: movable[5].id, evaluator: "Z1-4" }, { instId: "LA-YOJAD", evaluator: "Z1-4" }],
+});
+chk(half.status === 404, "دفعة فيها مؤسسة غير موجودة تُرفض (404)");
+const still = (await (await call(lead1.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === movable[5].id).evaluator;
+chk(still === evBefore, "الدفعة المرفوضة لم تُحفظ جزئياً");
+chk(
+  (await call(lead1.sid, "/api/assign", "POST", {
+    instId: movable[0].id,
+    team: "منطقة 2",
+    evaluator: "Z2-1",
+  })).status === 403,
+  "رئيس الفريق لا ينقل مؤسسة خارج فريقه (403)",
+);
+// إعادة التوزيع الأصلي حتى لا تتأثر بقية الفحوص
+await call(lead1.sid, "/api/assign-bulk", "POST", { items: origAsg });
+const restored = (await (await call(lead1.sid, "/api/institutions")).json()).rows
+  .filter((r: { id: string; evaluator: string }) =>
+    origAsg.some((o: { instId: string; evaluator: string }) =>
+      o.instId === r.id && o.evaluator === r.evaluator
+    )
+  );
+chk(restored.length === own.length, `استُعيد التوزيع الأصلي (${restored.length})`);
+
+console.log("\n■ الملاحظات وترشيح قصص النجاح");
+const withNotes = { ...rawFor(defs, 95) } as Record<string, Record<string, unknown>>;
+withNotes["1"] = { ...withNotes["1"], note: "خطط التحضير موثّقة لكن الأنشطة الصفية أقل من المتوقع" };
+withNotes["6"] = { ...withNotes["6"], note: "المشاركة تركّزت في الصفوف العليا" };
+const nSave = await (await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: withNotes,
+  notes: "زيارة ميدانية بتاريخ اليوم: التزام واضح من الإدارة وضعف في توثيق الشراكات.",
+  story: { on: true, text: "حوّلت المدرسة فناءها إلى حديقة تعليمية يديرها الطلبة." },
+})).json();
+chk(nSave.ok && nSave.filled === 31, "الحفظ مع الملاحظات لا يتأثر باكتمال المؤشرات");
+chk(
+  nSave.kpiPct["1"] !== null && nSave.kpiPct["6"] !== null,
+  "الملاحظة لا تدخل حساب المؤشر",
+);
+const back2 = (await (await call(ev1.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === mine.id);
+chk(back2.notedKpis === 2, `ملاحظتان محفوظتان على مؤشرين (${back2.notedKpis})`);
+chk(
+  back2.kpi["1"].note.startsWith("خطط التحضير"),
+  "نص ملاحظة المؤشر يعود كما كُتب",
+);
+chk(back2.notes.includes("زيارة ميدانية"), "الملاحظات العامة محفوظة");
+chk(
+  back2.story.on === true && back2.story.text.includes("حديقة تعليمية"),
+  "الترشيح كقصة نجاح وتعليقه محفوظان",
+);
+const longNote = await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: { 1: { i: 10, j: 5, note: "x".repeat(1100) } },
+});
+chk(longNote.status === 400, "ملاحظة أطول من 1000 حرف تُرفض (400)");
+// رئيس الفريق يرشّح أيضاً
+const leadNom = await (await call(lead1.sid, "/api/evaluation", "POST", {
+  instId: "Z1-002",
+  kpi: rawFor(defs, 88),
+  story: { on: true, text: "ترشيح من رئيس الفريق" },
+})).json();
+chk(leadNom.ok, "رئيس الفريق يرشّح مؤسسة كقصة نجاح");
+const topNom = await (await call(lead1.sid, "/api/top")).json();
+const nomRows = topNom.teams[0].rows.filter((r: { nominated: boolean }) => r.nominated);
+chk(
+  nomRows.length >= 1 && nomRows.every((r: { nomination: string }) => r.nomination.length > 0),
+  `المرشَّحات تظهر لرئيس الفريق مع تعليقها (${nomRows.length})`,
+);
+// إلغاء الترشيح
+const unNom = await (await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: rawFor(defs, 95),
+  story: { on: false, text: "" },
+})).json();
+chk(unNom.ok, "إلغاء الترشيح ممكن");
+const after = (await (await call(ev1.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === mine.id);
+chk(after.story.on === false && after.notedKpis === 0, "الترشيح والملاحظات تُمسح عند عدم إرسالها");
+
+console.log("\n■ إعادة تعيين كلمات المرور");
+chk(
+  (await call(lead1.sid, "/api/reset-passwords", "POST", { ids: ["Z1-2"] })).status === 403,
+  "رئيس الفريق لا يعيد تعيين كلمات المرور (403)",
+);
+chk(
+  (await call(tech.sid, "/api/reset-passwords", "POST", { ids: [] })).status === 400,
+  "بلا تحديد ولا «الكل» يُرفض (400)",
+);
+chk(
+  (await call(tech.sid, "/api/reset-passwords", "POST", { ids: ["LA-YOJAD"] })).status === 404,
+  "حساب غير موجود يُرفض (404)",
+);
+chk(
+  (await call(tech.sid, "/api/reset-passwords", "POST", { ids: ["Z1-2"], password: "123" }))
+    .status === 400,
+  "كلمة أقصر من 8 محارف تُرفض (400)",
+);
+const sel = await (await call(tech.sid, "/api/reset-passwords", "POST", {
+  ids: ["Z1-2", "Z1-3"],
+})).json();
+chk(
+  sel.ok && sel.count === 2 && sel.isDefault === true,
+  `إعادة تعيين حسابين بالكلمة الافتراضية (${sel.count})`,
+);
+const d1 = await login("Z1-2", "12345678");
+chk(d1.status === 200 && !!d1.sid, "الدخول بالكلمة الافتراضية 12345678 ينجح");
+const mustCh = await (await call(d1.sid, "/api/me")).json();
+chk(mustCh.me.mustChange === true, "الحساب مُلزَم بتغيير كلمة المرور عند أول دخول");
+chk((await login("Z1-2", PW)).status === 401, "الكلمة السابقة لم تعد تعمل");
+const allRs = await (await call(tech.sid, "/api/reset-passwords", "POST", {
+  all: true,
+  password: "ResetAll#2026",
+})).json();
+chk(
+  allRs.count === 36 && allRs.skipped.length === 1 && allRs.skipped[0] === "TECH",
+  `إعادة تعيين الكل: ${allRs.count} حساباً والحساب الفني مستثنى (${allRs.skipped.join("")})`,
+);
+chk(
+  (await call(tech.sid, "/api/accounts")).status === 200,
+  "جلسة الحساب الفني لم تتأثر بإعادة التعيين الشاملة",
+);
+chk((await login("Z1-4", "ResetAll#2026")).status === 200, "الدخول بالكلمة الجماعية الجديدة");
+chk((await call(d1.sid, "/api/me")).status === 401, "جلسات الحسابات المعاد ضبطها أُنهيت");
+// إعادة الجميع إلى كلمة الاختبارات لبقية الفحوص
+await call(tech.sid, "/api/reset-passwords", "POST", { all: true, password: PW });
+// إعادة التعيين الشاملة أنهت جلسات الجميع عدا الحساب الفني، فنعيد الدخول
+[ev1, ev2, lead1, lead2] = await Promise.all([
+  login("Z1-1"),
+  login("Z1-2"),
+  login("Z1-L"),
+  login("Z2-L"),
+]);
+chk(
+  [ev1, ev2, lead1, lead2].every((x) => x.status === 200 && x.sid),
+  "إعادة دخول الحسابات بعد الضبط الشامل",
+);
+
+console.log("\n■ معاينة الحسابات");
+chk(
+  (await call(lead1.sid, "/api/view-as", "POST", { id: "Z1-1" })).status === 403,
+  "رئيس الفريق لا يعاين الحسابات (403)",
+);
+chk(
+  (await call(tech.sid, "/api/view-as", "POST", { id: "NOPE" })).status === 404,
+  "معاينة حساب غير موجود تُرفض (404)",
+);
+const vw = await (await call(tech.sid, "/api/view-as", "POST", { id: "Z1-1" })).json();
+chk(vw.ok && vw.viewing === "Z1-1", "الحساب الفني يبدأ معاينة حساب مقيّم");
+const asMe = await (await call(tech.sid, "/api/me")).json();
+chk(
+  asMe.me.id === "Z1-1" && asMe.me.role === "eval" && asMe.me.viewAs.by === "TECH",
+  `الجلسة تعرض حساب المقيّم مع بيان المعاين (${asMe.me.id} · ${asMe.me.viewAs?.by})`,
+);
+chk(
+  JSON.stringify(asMe.perms) === JSON.stringify(["mine", "central", "stats", "transfers"]),
+  `الشاشات المعروضة شاشات المقيّم (${asMe.perms.join(" · ")})`,
+);
+const asRows = (await (await call(tech.sid, "/api/institutions")).json()).rows;
+chk(asRows.length === 12, `نطاق المؤسسات صار نطاق المقيّم (${asRows.length})`);
+const wr = await call(tech.sid, "/api/evaluation", "POST", { instId: mine.id, kpi: {} });
+chk(wr.status === 403, "الكتابة معطَّلة أثناء المعاينة (403)");
+const wr2 = await call(tech.sid, "/api/central", "POST", { rows: [] });
+chk(wr2.status === 403, "البيانات المركزية أيضاً معطَّلة أثناء المعاينة (403)");
+chk(
+  (await call(tech.sid, "/api/accounts")).status === 403,
+  "شاشات الحساب الفني غير متاحة أثناء معاينة مقيّم (403)",
+);
+const vw2 = await (await call(tech.sid, "/api/view-as", "POST", { id: null })).json();
+chk(vw2.ok && vw2.viewing === null, "إنهاء المعاينة يعيد الحساب الفني");
+const back0 = await (await call(tech.sid, "/api/me")).json();
+chk(
+  back0.me.id === "TECH" && !back0.me.viewAs && (await call(tech.sid, "/api/accounts")).status === 200,
+  "الحساب الفني استعاد صلاحياته كاملة",
+);
+const vwLead = await (await call(tech.sid, "/api/view-as", "POST", { id: "Z1-L" })).json();
+chk(vwLead.viewing === "Z1-L", "معاينة حساب رئيس فريق");
+const leadView = (await (await call(tech.sid, "/api/institutions")).json()).rows;
+chk(leadView.length === 56, `نطاق رئيس الفريق أثناء معاينته (${leadView.length})`);
+await call(tech.sid, "/api/view-as", "POST", { id: null });
+const audV = (await (await call(tech.sid, "/api/audit")).json()).rows;
+chk(
+  audV.some((r: { action: string }) => r.action === "بدء معاينة حساب") &&
+    audV.some((r: { action: string }) => r.action === "إنهاء معاينة حساب"),
+  "بدء المعاينة وإنهاؤها مسجَّلان في التدقيق",
+);
+
+console.log("\n■ البيانات المركزية للمقيّم ورئيس الفريق");
+const evCd = await (await call(ev1.sid, "/api/central", "POST", {
+  rows: [{ id: mine.id, students: 640, teachers: 33, subjects: 9 }],
+})).json();
+chk(evCd.ok, "المقيّم يُدخل بيانات مؤسساته المركزية");
+chk(
+  (await call(ev1.sid, "/api/central", "POST", { rows: [{ id: "Z2-001", students: 100 }] }))
+    .status === 403,
+  "المقيّم لا يُدخل بيانات مؤسسة خارج نطاقه (403)",
+);
+const leadCd = await call(lead1.sid, "/api/central", "POST", {
+  rows: [{ id: "Z1-002", students: 500, teachers: 25, subjects: 8 }],
+});
+chk(leadCd.status === 200, "رئيس الفريق يُدخل بيانات أي مؤسسة بفريقه");
+const evScope = (await (await call(ev1.sid, "/api/central")).json()).rows;
+chk(evScope.length === 12, `نطاق المقيّم في شاشة البيانات (${evScope.length} مؤسسة)`);
+const cdYear = await call(tech.sid, "/api/central", "POST", {
+  year: "2025-2026",
+  rows: [{ id: mine.id, students: 1 }],
+});
+chk(cdYear.status === 403, "لا تُدخل بيانات عام مغلق (403)");
+await call(tech.sid, "/api/central", "POST", {
+  rows: [{ id: mine.id, students: 850, teachers: 40, subjects: 10 }],
+});
+
+console.log("\n■ تغيير اسم المستخدم");
+chk(
+  (await call(lead1.sid, "/api/account-rename", "POST", { id: "Z1-5", newId: "X" })).status === 403,
+  "رئيس الفريق لا يغيّر أسماء المستخدمين (403)",
+);
+chk(
+  (await call(tech.sid, "/api/account-rename", "POST", { id: "Z1-5", newId: "ا ب" })).status === 400,
+  "اسم مستخدم بصيغة غير مقبولة يُرفض (400)",
+);
+chk(
+  (await call(tech.sid, "/api/account-rename", "POST", { id: "Z1-5", newId: "Z1-4" })).status === 400,
+  "اسم مستخدم مستخدم بالفعل يُرفض (400)",
+);
+const before = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .filter((r: { evaluator: string }) => r.evaluator === "Z1-5").length;
+const rn = await (await call(tech.sid, "/api/account-rename", "POST", {
+  id: "Z1-5",
+  newId: "Z1-5A",
+})).json();
+chk(rn.ok && rn.moved === before, `تغيير الاسم نقل ${rn.moved} مؤسسة (المتوقع ${before})`);
+const accsAfter = (await (await call(tech.sid, "/api/accounts")).json()).accounts;
+chk(
+  accsAfter.some((a: { id: string }) => a.id === "Z1-5A") &&
+    !accsAfter.some((a: { id: string }) => a.id === "Z1-5"),
+  "الحساب القديم اختفى والجديد ظهر",
+);
+const oldLogin = await login("Z1-5");
+chk(oldLogin.status === 401, "الدخول بالاسم القديم يفشل (401)");
+const newLogin = await login("Z1-5A");
+chk(newLogin.status === 200 && !!newLogin.sid, "الدخول بالاسم الجديد ينجح");
+await call(tech.sid, "/api/account-rename", "POST", { id: "Z1-5A", newId: "Z1-5" });
 
 console.log("\n■ طلبات النقل");
 const badMove = await call(ev1.sid, "/api/transfers", "POST", {

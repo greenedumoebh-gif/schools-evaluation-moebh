@@ -73,7 +73,8 @@ with sync_playwright() as p:
 
     # ── المقيّم: شاشة إدخال التقييم ──
     login(pg, "Z1-1")
-    chk(pg.locator("#nav a").count() >= 2, f"شريط التنقل ظهر ({pg.locator('#nav a').count()} شاشة)")
+    navs = pg.evaluate("()=>[...document.querySelectorAll('#nav a')].map(a=>a.dataset.s)")
+    chk("central" in navs, f"شاشة بيانات المؤسسات متاحة للمقيّم ({' · '.join(navs)})")
     chk(pg.locator("[data-open]").count() > 0, f"جدول مؤسساتي ({pg.locator('[data-open]').count()} مؤسسة)")
     hdr = pg.locator("#content table thead th").all_inner_texts()
     chk("التصنيف" in hdr, f"عمود تصنيف الحجم في جدول مؤسساتي ({' · '.join(hdr[:6])})")
@@ -229,6 +230,24 @@ with sync_playwright() as p:
 
     chk(pg.locator("[data-move]").count() > 0, "زر طلب النقل متاح للمقيّم")
 
+    # ملاحظات المؤشرات والملاحظات العامة وترشيح قصة النجاح
+    chk(pg.locator(".notebtn").count() == 31, f"زر ملاحظة لكل مؤشر ({pg.locator('.notebtn').count()})")
+    chk(
+        pg.evaluate("()=>[...document.querySelectorAll('.noteta')].every(t=>t.hidden)"),
+        "خانات الملاحظات مخفية افتراضياً — الكتابة اختيارية",
+    )
+    pg.locator('.notebtn[data-note="1"]').click()
+    pg.wait_for_timeout(200)
+    chk(not pg.locator("#nt1").is_hidden(), "خانة الملاحظة تفتح بالضغط")
+    pg.fill("#nt1", "ملاحظة اختبارية على المؤشر الأول")
+    pg.fill("#evNotes", "ملاحظة عامة على أداء المؤسسة")
+    chk(pg.locator("#stOn").count() == 1, "خانة ترشيح قصة النجاح موجودة")
+    chk(pg.locator("#stBox").is_hidden(), "صندوق تعليق القصة مغلق قبل التحديد")
+    pg.check("#stOn")
+    pg.wait_for_timeout(200)
+    chk(not pg.locator("#stBox").is_hidden(), "التحديد يفتح صندوق تعليق القصة")
+    pg.fill("#stText", "تجربة حديقة المدرسة التعليمية")
+
     pg.click("#evSave")
     pg.wait_for_selector(".toast", timeout=10000)
     toast = pg.locator(".toast").first.inner_text()
@@ -238,6 +257,15 @@ with sync_playwright() as p:
     # إعادة الفتح: المدخلات باقية
     pg.locator("[data-open]").first.click()
     pg.wait_for_selector(".axbox", timeout=15000)
+    chk(
+        pg.evaluate("()=>document.getElementById('nt1').value.length") > 0,
+        "ملاحظة المؤشر محفوظة بعد إعادة الفتح",
+    )
+    chk(pg.locator("#stOn").is_checked(), "الترشيح كقصة نجاح محفوظ")
+    chk(
+        "حديقة" in pg.evaluate("()=>document.getElementById('stText').value"),
+        "تعليق قصة النجاح محفوظ",
+    )
     kept = pg.evaluate(
         "()=>[...document.querySelectorAll('#modalBody input[data-k]')].filter(e=>e.value!=='').length"
     )
@@ -284,6 +312,106 @@ with sync_playwright() as p:
     chk("رياض أطفال" in kgrow, "روضة: المرحلة «رياض أطفال» لا «غير مسجَّل»")
     chk("4,500" in pg4.locator("#evSum").inner_text(), "روضة: السقف 4,500 في جدول النتيجة")
 
+    # ── رئيس الفريق: كل مؤسسات فريقه وإدخال التقييم ──
+    pg6 = br.new_page(viewport={"width": 1440, "height": 950})
+    pg6.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
+    pg6.on("pageerror", lambda e: errs.append(str(e)))
+    login(pg6, "Z1-L")
+    lnav = pg6.evaluate("()=>[...document.querySelectorAll('#nav a')].map(a=>a.dataset.s)")
+    chk("mine" in lnav and "central" in lnav, f"شاشات رئيس الفريق ({' · '.join(lnav)})")
+    pg6.locator('#nav a[data-s="mine"]').click()
+    pg6.wait_for_selector("#content tbody tr", timeout=15000)
+    nlead = pg6.locator("#content tbody tr").count()
+    chk(nlead == 56, f"رئيس الفريق يرى كل مؤسسات فريقه ({nlead})")
+    lhdr = pg6.locator("#content thead th").all_inner_texts()
+    chk("المقيّم" in lhdr, f"عمود المقيّم في جدول رئيس الفريق ({' · '.join(lhdr[-3:])})")
+    chk(pg6.locator("[data-open]").count() == 56, "زر التقييم متاح لكل مؤسسة")
+    pg6.locator("[data-open]").first.click()
+    pg6.wait_for_selector(".axbox", timeout=15000)
+    chk(pg6.locator("#evSave").count() == 1, "زر حفظ التقييم متاح لرئيس الفريق")
+    pg6.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    pg6.wait_for_timeout(300)
+
+    # ── لوحة توزيع المؤسسات بالسحب والإفلات ──
+    chk("assign" in lnav, "شاشة التوزيع متاحة لرئيس الفريق")
+    pg6.locator('#nav a[data-s="assign"]').click()
+    pg6.wait_for_selector(".asgcol", timeout=20000)
+    ncol = pg6.locator(".asgcol").count()
+    chk(ncol == 5, f"عمود لكل مقيّم في الفريق ({ncol})")
+    ncard = pg6.locator(".asgcard").count()
+    chk(ncard == 56, f"بطاقة لكل مؤسسة ({ncard})")
+    chk(
+        pg6.evaluate("()=>[...document.querySelectorAll('.asgcard')].every(c=>c.draggable)"),
+        "كل البطاقات قابلة للسحب",
+    )
+    chk(pg6.locator("#asgSave").is_disabled(), "زر الحفظ معطَّل قبل أي تغيير")
+    chk("لا تغييرات معلّقة" in pg6.locator(".asgnote").inner_text(), "شريط الحالة يبدأ فارغاً")
+
+    # السحب والإفلات فعلياً
+    src = pg6.locator(".asgcol").nth(0).locator(".asgcard").first
+    inst_id = src.get_attribute("data-inst")
+    before_n = pg6.locator(".asgcol").nth(1).locator(".asgcard").count()
+    src.drag_to(pg6.locator(".asgdrop").nth(1))
+    pg6.wait_for_timeout(500)
+    after_n = pg6.locator(".asgcol").nth(1).locator(".asgcard").count()
+    chk(after_n == before_n + 1, f"السحب نقل البطاقة للعمود الثاني ({before_n} ← {after_n})")
+    chk(
+        pg6.locator(f'.asgcard[data-inst="{inst_id}"].moved').count() == 1,
+        "البطاقة المنقولة موسومة كتغيير معلّق",
+    )
+    chk(not pg6.locator("#asgSave").is_disabled(), "زر الحفظ صار متاحاً بعد التغيير")
+    chk("1 تغيير" in pg6.locator(".asgnote").inner_text(), "عدّاد التغييرات المعلّقة يعمل")
+
+    # النقل اليدوي بالقائمة
+    pg6.locator(f'select[data-mv="{inst_id}"]').select_option("Z1-3")
+    pg6.wait_for_timeout(400)
+    chk(
+        pg6.locator('.asgcol:nth-child(3) .asgcard[data-inst="' + inst_id + '"]').count() == 1
+        or pg6.evaluate(
+            "(id)=>{const c=document.querySelector(`.asgcard[data-inst='${id}']`);"
+            "return c.closest('.asgdrop').dataset.col}",
+            inst_id,
+        ) == "Z1-3",
+        "النقل اليدوي بالقائمة يعمل",
+    )
+
+    # التراجع
+    pg6.click("#asgReset")
+    pg6.wait_for_timeout(400)
+    chk(pg6.locator(".asgcard.moved").count() == 0, "التراجع يلغي كل التغييرات المعلّقة")
+    chk(pg6.locator("#asgSave").is_disabled(), "زر الحفظ عاد معطَّلاً بعد التراجع")
+
+    # الحفظ الفعلي ثم الإرجاع
+    src2 = pg6.locator(".asgcol").nth(0).locator(".asgcard").first
+    id2 = src2.get_attribute("data-inst")
+    orig_col = pg6.evaluate(
+        "(id)=>document.querySelector(`.asgcard[data-inst='${id}']`).closest('.asgdrop').dataset.col",
+        id2,
+    )
+    src2.drag_to(pg6.locator(".asgdrop").nth(3))
+    pg6.wait_for_timeout(400)
+    pg6.click("#asgSave")
+    pg6.wait_for_selector(".toast", timeout=15000)
+    chk("حُفظ توزيع" in pg6.locator(".toast").first.inner_text(), "الحفظ يعيد رسالة تأكيد")
+    pg6.wait_for_selector(".asgcol", timeout=20000)
+    pg6.wait_for_timeout(600)
+    col_of = pg6.evaluate(
+        "(id)=>document.querySelector(`.asgcard[data-inst='${id}']`).closest('.asgdrop').dataset.col",
+        id2,
+    )
+    chk(col_of == "Z1-4", f"التوزيع محفوظ فعلاً في الخادم ({col_of})")
+    chk(pg6.locator(".asgcard.moved").count() == 0, "لا تغييرات معلّقة بعد الحفظ")
+    # إعادة المؤسسة إلى مقيّمها الأصلي حتى لا تتأثر بقية الفحوص
+    pg6.locator(f'select[data-mv="{id2}"]').select_option(orig_col)
+    pg6.wait_for_timeout(400)
+    pg6.click("#asgSave")
+    pg6.wait_for_timeout(2500)
+    back_col = pg6.evaluate(
+        "(id)=>document.querySelector(`.asgcard[data-inst='${id}']`).closest('.asgdrop').dataset.col",
+        id2,
+    )
+    chk(back_col == orig_col, f"أُعيدت المؤسسة إلى مقيّمها الأصلي ({back_col})")
+
     # ── الحساب الفني: محرّر المؤشرات ──
     pg2.wait_for_selector("#tgBox .frow", timeout=20000)
     chk(pg2.locator("#tgBox .frow").count() == 31, f"محرّر مؤشرات النظامي 31 مؤشراً ({pg2.locator('#tgBox .frow').count()})")
@@ -300,8 +428,65 @@ with sync_playwright() as p:
     chk(pg2.locator("#tgBox .frow").count() == 25, f"محرّر مؤشرات المبكر 25 مؤشراً ({pg2.locator('#tgBox .frow').count()})")
     chk(pg2.locator("#tgBox [data-prop]").count() == 6, f"ستة أزرار مقترح للمبكر ({pg2.locator('#tgBox [data-prop]').count()})")
 
+    # ── معاينة حساب آخر ──
+    chk(pg2.locator("[data-viewas]").count() == 37, "زر معاينة لكل حساب")
+
+    # إعادة تعيين كلمات المرور
+    chk(pg2.locator(".pwck").count() == 37, "خانة اختيار لكل حساب")
+    chk(pg2.locator("#pwSel").count() == 1 and pg2.locator("#pwAll").count() == 1,
+        "زرا إعادة التعيين للمحدد وللكل")
+    chk("12345678" in pg2.locator("#content").inner_text(), "الكلمة الافتراضية معروضة للفني")
+    pg2.check("#pwCkAll")
+    pg2.wait_for_timeout(200)
+    chk(
+        pg2.locator(".pwck:checked").count() == 37,
+        f"تحديد الكل يعمل ({pg2.locator('.pwck:checked').count()})",
+    )
+    pg2.uncheck("#pwCkAll")
+    pg2.wait_for_timeout(200)
+    chk(pg2.locator(".pwck:checked").count() == 0, "إلغاء التحديد يعمل")
+    pg2.locator('[data-viewas="Z1-1"]').click()
+    pg2.wait_for_selector("#viewbar", timeout=20000)
+    # المعاينة تعيد تحميل الصفحة، فتفتح نافذة كلمة المرور الإلزامية للحساب المعايَن
+    pg2.wait_for_timeout(1200)
+    pg2.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    vb = pg2.locator("#viewbar").inner_text()
+    chk("Z1-1" in vb and "معاينة" in vb, f"لافتة المعاينة ظاهرة ({vb[:46]}…)")
+    vnav = pg2.evaluate("()=>[...document.querySelectorAll('#nav a')].map(a=>a.dataset.s)")
+    chk(
+        "tech" not in vnav and "mine" in vnav,
+        f"الشاشات صارت شاشات المقيّم ({' · '.join(vnav)})",
+    )
+    pg2.locator('#nav a[data-s="mine"]').click()
+    pg2.wait_for_selector("#content tbody tr", timeout=15000)
+    chk(pg2.locator("#content tbody tr").count() == 12, "نطاق المؤسسات صار نطاق المقيّم")
+    pg2.locator("[data-open]").first.click()
+    pg2.wait_for_selector(".axbox", timeout=15000)
+    chk(pg2.locator("#evSave").count() == 1, "شاشة التقييم تُعرض كما يراها المقيّم")
+    vsave = pg2.evaluate(
+        """async()=>{const r=await fetch('/api/evaluation',{method:'POST',
+        headers:{'content-type':'application/json'},body:JSON.stringify({instId:'Z1-001',kpi:{}})});
+        return r.status}"""
+    )
+    chk(vsave == 403, f"الخادم يرفض الكتابة أثناء المعاينة ({vsave})")
+    # هذا الرفض متعمَّد في الفحص أعلاه، فلا يُحسب خطأ كونسول
+    errs[:] = [e for e in errs if "403" not in e]
+    pg2.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    pg2.wait_for_timeout(300)
+    pg2.click("#vbExit")
+    pg2.wait_for_timeout(1500)
+    pg2.evaluate("()=>document.getElementById('modal').classList.remove('on')")
+    pg2.locator('#nav a[data-s="tech"]').click()
+    pg2.wait_for_selector("#tgBox .frow", timeout=25000)
+    pg2.wait_for_selector("#asBox table", timeout=25000)
+    chk(pg2.locator("#viewbar").count() == 0, "اللافتة اختفت بعد إنهاء المعاينة")
+    tnav = pg2.evaluate("()=>[...document.querySelectorAll('#nav a')].map(a=>a.dataset.s)")
+    chk("tech" in tnav, f"الحساب الفني استعاد شاشاته ({' · '.join(tnav)})")
+
     # ── إدارة الحسابات والإسناد ──
     chk(pg2.locator("[data-acsave]").count() == 37, f"زر حفظ لكل حساب ({pg2.locator('[data-acsave]').count()})")
+    chk(pg2.locator("[data-rn]").count() == 37, "خانة اسم المستخدم قابلة للتعديل لكل حساب")
+    chk(pg2.locator("[data-rnsave]").count() == 37, "زر تغيير اسم المستخدم لكل حساب")
     chk(pg2.locator('[data-af="team"]').count() == 36, f"قائمة فريق لكل حساب عدا الفني ({pg2.locator('[data-af=team]').count()})")
     pg2.wait_for_selector("#asBox table", timeout=20000)
     chk(pg2.locator("#asBox tbody tr").count() == 56, f"إسناد منطقة 1: {pg2.locator('#asBox tbody tr').count()} مؤسسة")
@@ -337,6 +522,26 @@ with sync_playwright() as p:
         ],
         f"أسماء المحاور عربية كاملة في الرسم ({ch['axLabels'][0]})",
     )
+
+    # ── شاشة البيانات المركزية للمقيّم ──
+    pg.locator('#nav a[data-s="central"]').click()
+    pg.wait_for_selector("#content table", timeout=15000)
+    ncd = pg.locator("#content tbody tr").count()
+    chk(ncd == 12, f"المقيّم يرى بيانات مؤسساته وحدها ({ncd})")
+    chk(pg.locator("#cdSaveAll").count() == 1, "زر الحفظ متاح للمقيّم")
+    chk(
+        "تخصّ عاماً دراسياً بعينه" in pg.locator("#content").inner_text(),
+        "تنبيه ارتباط الأعداد بالعام الدراسي ظاهر",
+    )
+    inp = pg.locator('#content [data-cdf="students"]').first
+    inp.fill("1500")
+    pg.wait_for_timeout(300)
+    chk(
+        "الكبيرة جداً" in pg.locator("#content tbody tr").first.inner_text(),
+        "التصنيف يُشتق حياً في شاشة المقيّم",
+    )
+    pg.locator('#nav a[data-s="mine"]').click()
+    pg.wait_for_timeout(1500)
 
     # ── العام المؤرشف 2025-2026 ──
     pg.evaluate("()=>document.getElementById('modal').classList.remove('on')")
@@ -375,7 +580,7 @@ with sync_playwright() as p:
     chk(dis, "خانات الإدخال معطَّلة في عام غير جارٍ")
     pg.click("#mClose")
 
-    body = pg.locator("body").inner_text() + pg2.locator("body").inner_text() + pg3.locator("body").inner_text() + pg4.locator("body").inner_text() + pg5.locator("body").inner_text()
+    body = pg.locator("body").inner_text() + pg2.locator("body").inner_text() + pg3.locator("body").inner_text() + pg4.locator("body").inner_text() + pg5.locator("body").inner_text() + pg6.locator("body").inner_text()
     chk("undefined" not in body and "NaN" not in body, "لا يوجد undefined/NaN في الصفحات")
     chk(len(errs) == 0, f"أخطاء الكونسول: {len(errs)} {errs[:3]}")
     br.close()
