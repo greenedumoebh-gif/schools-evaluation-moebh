@@ -1,6 +1,7 @@
 // واجهات البيانات — الصلاحيات مطبَّقة هنا في الخادم لا في المتصفح
 import {
   type Account,
+  addMessage,
   audit,
   bumpInstVer,
   type CentralData,
@@ -8,28 +9,36 @@ import {
   delStory,
   type Evaluation,
   getCentral,
+  getEditing,
   getEvals,
   getPicks,
+  getThread,
   getTransfer,
   hashPw,
   type Inst,
   kv,
   listAccounts,
   listAudit,
+  listInbox,
   listInst,
+  listMessages,
   listStories,
   listTransfers,
   listYears,
+  markEditing,
   META,
   newSalt,
   setCentral,
   setCurrentYear,
   setEval,
+  setInbox,
   setPicks,
   setStory,
+  setThread,
   setTransfer,
   sizeOf,
   type Story,
+  type Thread,
   type Transfer,
 } from "./db.ts";
 import {
@@ -158,6 +167,130 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
   const acc = me!;
   const inScope = scope(acc);
 
+  // ── المراسلات ──
+  /** من يجوز مراسلته: من يشاركك فريقاً، ومن نطاقه يشملك (رئيس فرق · رئيس التعليم الأخضر · الفني). */
+  const canReach = async () => {
+    const mine = teamsOf(acc);
+    return (await listAccounts()).filter((a) => {
+      if (a.id === acc.id) return false;
+      const theirs = teamsOf(a);
+      if (mine === null || theirs === null) return true;
+      return theirs.some((t) => mine.includes(t));
+    });
+  };
+
+  if (p === "/api/contacts") {
+    return J({
+      rows: (await canReach()).map((a) => ({
+        id: a.id,
+        name: a.name,
+        title: a.title,
+        role: a.role,
+        team: a.team,
+      })),
+    });
+  }
+
+  if (p === "/api/threads" && req.method === "GET") {
+    const inbox = await listInbox(acc.id);
+    const rows = [];
+    for (const e of inbox) {
+      const t = await getThread(e.threadId);
+      if (t) rows.push({ ...t, unread: e.unread });
+    }
+    return J({ rows, unread: rows.reduce((n, r) => n + r.unread, 0) });
+  }
+
+  if (p === "/api/threads" && req.method === "POST") {
+    const b = await req.json().catch(() => ({}));
+    const subject = String(b.subject ?? "").trim().slice(0, 160);
+    const text = String(b.text ?? "").trim().slice(0, 4000);
+    if (!subject) return J({ error: "الموضوع مطلوب" }, 400);
+    if (!text) return J({ error: "نص الرسالة مطلوب" }, 400);
+    const ids: string[] = Array.isArray(b.to) ? [...new Set((b.to as unknown[]).map((x) => String(x)))] : [];
+    if (!ids.length) return J({ error: "اختر مستلماً واحداً على الأقل" }, 400);
+    const reach = new Set((await canReach()).map((a) => a.id));
+    const bad = ids.filter((i) => !reach.has(i));
+    if (bad.length) return forbid(`لا يمكنك مراسلة: ${bad.join(" · ")}`);
+    let instId: string | null = null, instName: string | null = null, team: string | null = null;
+    if (b.instId) {
+      const inst = (await kv.get<Inst>(["inst", String(b.instId)])).value;
+      if (!inst) return J({ error: "المؤسسة غير موجودة" }, 404);
+      if (!inScope(inst.team, inst.evaluator)) return forbid("المؤسسة خارج نطاقك");
+      instId = inst.id;
+      instName = inst.name;
+      team = inst.team;
+    }
+    const at = new Date().toISOString();
+    const t: Thread = {
+      id: crypto.randomUUID(),
+      subject,
+      instId,
+      instName,
+      team,
+      members: [acc.id, ...ids],
+      by: acc.id,
+      at,
+      last: at,
+      lastBy: acc.id,
+      count: 1,
+    };
+    await setThread(t);
+    await addMessage({ id: crypto.randomUUID(), threadId: t.id, by: acc.id, at, text });
+    for (const m of t.members) await setInbox(m, t.id, m === acc.id ? 0 : 1, at);
+    return J({ ok: true, id: t.id });
+  }
+
+  if (p === "/api/thread") {
+    const id = url.searchParams.get("id") ?? "";
+    const t = await getThread(id);
+    if (!t) return J({ error: "الموضوع غير موجود" }, 404);
+    if (!t.members.includes(acc.id)) return forbid("هذا الموضوع ليس ضمن مراسلاتك");
+    // فتح الموضوع يصفّر غير المقروء لصاحب الجلسة وحده
+    if (!acc.viewAs) await setInbox(acc.id, t.id, 0, t.last);
+    const msgs = await listMessages(t.id);
+    const names: Record<string, string> = {};
+    for (const a of await listAccounts()) {
+      if (t.members.includes(a.id)) names[a.id] = a.name;
+    }
+    return J({ thread: t, messages: msgs, names });
+  }
+
+  if (p === "/api/message" && req.method === "POST") {
+    const { threadId, text } = await req.json().catch(() => ({}));
+    const t = await getThread(String(threadId ?? ""));
+    if (!t) return J({ error: "الموضوع غير موجود" }, 404);
+    if (!t.members.includes(acc.id)) return forbid("هذا الموضوع ليس ضمن مراسلاتك");
+    const body = String(text ?? "").trim().slice(0, 4000);
+    if (!body) return J({ error: "لا نص للإرسال" }, 400);
+    const at = new Date().toISOString();
+    await addMessage({ id: crypto.randomUUID(), threadId: t.id, by: acc.id, at, text: body });
+    t.last = at;
+    t.lastBy = acc.id;
+    t.count++;
+    await setThread(t);
+    for (const m of t.members) {
+      if (m === acc.id) {
+        await setInbox(m, t.id, 0, at);
+        continue;
+      }
+      const cur = (await kv.get<{ unread: number }>(["inbox", m, t.id])).value;
+      await setInbox(m, t.id, (cur?.unread ?? 0) + 1, at);
+    }
+    return J({ ok: true, count: t.count });
+  }
+
+  // ── سمة الألوان: تفضيل شخصي يُحفظ مع الحساب ──
+  if (p === "/api/theme" && req.method === "POST") {
+    const { theme } = await req.json().catch(() => ({}));
+    const t = String(theme ?? "");
+    if (!META.themes.some((x) => x.id === t)) return J({ error: "سمة غير معروفة" }, 400);
+    const cur = (await kv.get<Account>(["account", acc.id])).value;
+    if (!cur) return J({ error: "الحساب غير موجود" }, 404);
+    await kv.set(["account", acc.id], { ...cur, theme: t });
+    return J({ ok: true, theme: t });
+  }
+
   // ── معاينة حساب آخر — الحساب الفني وحده، وللقراءة فقط ──
   if (p === "/api/view-as" && req.method === "POST") {
     const sid = sidFrom(req)!;
@@ -208,6 +341,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         archiveYear: META.archiveYear,
         teamMeta: META.teamMeta,
         roleLabels: ROLE_LABELS,
+        themes: META.themes,
         issuers: META.issuers,
         greenLead: META.greenLead,
         sectors: META.sectors,
@@ -217,11 +351,21 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       },
       // ترتيب الشاشات: تبدأ بالشاشة الأساسية لكل دور
       perms: (({
-        eval: ["mine", "central", "stats", "transfers"],
-        lead: ["team", "mine", "central", "assign", "stats", "top", "transfers", "reports"],
-        super: ["team", "mine", "central", "assign", "stats", "top", "transfers", "reports"],
-        director: ["team", "mine", "central", "assign", "stats", "top", "transfers", "reports"],
-        tech: ["tech", "team", "central", "assign", "stats", "top", "transfers", "reports"],
+        eval: ["mine", "central", "stats", "transfers", "mail"],
+        lead: ["team", "mine", "central", "assign", "stats", "top", "transfers", "mail", "reports"],
+        super: ["team", "mine", "central", "assign", "stats", "top", "transfers", "mail", "reports"],
+        director: [
+          "team",
+          "mine",
+          "central",
+          "assign",
+          "stats",
+          "top",
+          "transfers",
+          "mail",
+          "reports",
+        ],
+        tech: ["tech", "team", "central", "assign", "stats", "top", "transfers", "mail", "reports"],
       } as Record<string, string[]>)[acc.role] ?? []).filter((x) => can(acc, x)),
     });
   }
@@ -351,13 +495,30 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
         ? ((c ?? {}) as unknown as Record<string, number | null>)[META.denomMap[k.denom]] ?? null
         : null,
     }));
+    const yrNow = await currentYear();
+    const curEv = (await kv.get<Evaluation>(["eval", yrNow, id])).value;
+    // نقرأ الحضور قبل تسجيل حضورنا، وإلا محونا أثر من فتحها قبلنا
+    const other = await getEditing(id, yrNow);
+    if (can(acc, "eval:write") && !acc.viewAs) await markEditing(id, acc.id, yrNow);
+    const names = new Map((await listAccounts()).map((a) => [a.id, a.name]));
     return J({
       stage: st,
+      rev: curEv?.rev ?? 0,
+      savedBy: curEv?.by ?? null,
+      savedByName: curEv?.by ? names.get(curEv.by) ?? curEv.by : null,
+      savedAt: curEv?.at ?? null,
+      editingBy: other && other.by !== acc.id
+        ? { id: other.by, name: names.get(other.by) ?? other.by }
+        : null,
       cap: capOf(i.team),
       axw: axw(i.team),
       states: META.states,
       topStage: topStage(i),
       central: c ?? { students: null, teachers: null, subjects: null },
+      // القيم المحفوظة تُرسَل مع التعريف حتى لا تُبنى الشاشة من نسخة قديمة في المتصفح
+      kpi: curEv?.kpi ?? {},
+      notes: curEv?.notes ?? "",
+      story: curEv?.story ?? { on: false, text: "" },
       kpis: rows,
     });
   }
@@ -448,6 +609,22 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
     }
     const ov = await getTargets(stageOf(inst.team));
     const yr = await currentYear();
+    const prevEv = (await kv.get<Evaluation>(["eval", yr, body.instId])).value;
+    const curRev = prevEv?.rev ?? 0;
+    // كشف التعارض: من حمّل الشاشة على مراجعة أقدم لا يكتب فوق عمل غيره
+    if (body.rev !== undefined && Number(body.rev) !== curRev) {
+      const who = prevEv?.by ?? "";
+      const nm = (await listAccounts()).find((a) => a.id === who);
+      return J({
+        error: `عُدّل هذا التقييم من حساب آخر${
+          nm ? ` (${nm.name})` : who ? ` (${who})` : ""
+        }. حدّث الشاشة قبل الحفظ حتى لا يُمسح عمله.`,
+        conflict: true,
+        rev: curRev,
+        savedBy: who,
+        savedAt: prevEv?.at ?? null,
+      }, 409);
+    }
     const sc = scoreInst(inst.team, inst, kpi, ov, (await getCentral(yr))[body.instId]);
     const ev: Evaluation = {
       instId: body.instId,
@@ -455,6 +632,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       kpi,
       axes: sc.axes,
       filled: sc.filled,
+      rev: curRev + 1,
       status: sc.filled === sc.total ? "مكتمل" : (sc.filled ? "قيد التقييم" : "لم يبدأ"),
       notes: String(body.notes ?? "").slice(0, 4000),
       story: {
@@ -465,9 +643,11 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       at: new Date().toISOString(),
     };
     await setEval(ev);
+    await markEditing(body.instId, acc.id, yr);
     await audit(acc.id, "حفظ تقييم", body.instId, `${ev.status} · ${sc.filled}/${sc.total}`);
     return J({
       ok: true,
+      rev: ev.rev,
       status: ev.status,
       pct: sc.pct,
       pts: sc.pts,

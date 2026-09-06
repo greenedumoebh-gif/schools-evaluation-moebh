@@ -10,6 +10,7 @@ const SECS = {
   reports: ["التقارير", "ملخص الفريق والتصدير", "▦"],
   assign: ["توزيع المؤسسات", "توزيع مؤسسات الفريق على المقيّمين", "⇲"],
   central: ["بيانات المؤسسات", "أعداد الطلبة والمعلمين والمواد لهذا العام", "▦"],
+  mail: ["المراسلات", "مراسلة الزملاء داخل نطاقك", "✉"],
   transfers: ["طلبات النقل", "نقل المؤسسات بين المقيّمين داخل الفريق", "⇄"],
   tech: ["الحساب الفني", "البيانات المركزية والحسابات والمؤشرات", "⚙"],
 };
@@ -48,7 +49,12 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || "تعذّر تنفيذ الطلب");
+  if (!r.ok) {
+    const err = new Error(j.error || "تعذّر تنفيذ الطلب");
+    // نمرّر تفاصيل الخطأ للمستدعي (مثل تعارض التحرير) لا نصّه فقط
+    Object.assign(err, j, { status: r.status });
+    throw err;
+  }
   return j;
 }
 
@@ -78,6 +84,7 @@ async function boot() {
   PERMS = me.perms;
   $("#login").hidden = true;
   $("#app").hidden = false;
+  applyTheme(ME.theme);
   VYEAR = VYEAR ?? META.currentYear;
   const tm = ME.team ? META.teamMeta[ME.team] : null;
   $("#brandSub").textContent = tm
@@ -88,6 +95,7 @@ async function boot() {
     `فريق التعليم الأخضر · وزارة التربية والتعليم · الإصدار ${META.version} · ${VYEAR}`;
   buildYearTabs();
   buildViewBar();
+  buildThemes();
   $("#who").innerHTML = `<div class="n">${esc(ME.name)}</div><div class="r">${esc(ME.title)}${
     ME.team ? " · " + esc(ME.team) : ""
   }</div><button id="soBtn">تسجيل الخروج</button>`;
@@ -155,6 +163,44 @@ function buildYearTabs() {
   );
 }
 
+/** اختيار سمة الألوان — تفضيل شخصي يُطبَّق فوراً ويُحفظ في الحساب. */
+function applyTheme(id) {
+  document.documentElement.dataset.theme = id || "green";
+}
+function buildThemes() {
+  const box = document.getElementById("themebar") ?? (() => {
+    const lbl = document.createElement("div");
+    lbl.className = "themelbl";
+    lbl.textContent = "سمة الألوان";
+    const d = document.createElement("div");
+    d.id = "themebar";
+    d.className = "themebar";
+    $("#nav").before(lbl, d);
+    return d;
+  })();
+  const cur = ME.theme || "green";
+  box.innerHTML = (META.themes ?? []).map((t) =>
+    `<button class="thbtn${t.id === cur ? " on" : ""}" data-th="${t.id}"
+      title="${esc(t.name)} — ${esc(t.desc)}">${
+      t.sw.map((c) => `<i style="background:${c}"></i>`).join("")
+    }</button>`
+  ).join("");
+  box.querySelectorAll("[data-th]").forEach((b) =>
+    b.onclick = async () => {
+      const id = b.dataset.th;
+      applyTheme(id);
+      ME.theme = id;
+      buildThemes();
+      await render(); // الرسوم تقرأ ألوانها من السمة، فتُعاد بعد التبديل
+      try {
+        await api("/api/theme", { method: "POST", body: { theme: id } });
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+  );
+}
+
 function buildNav() {
   $("#nav").innerHTML = PERMS.map((k) =>
     `<a data-s="${k}" class="${k === SEC ? "active" : ""}">
@@ -194,7 +240,7 @@ async function render() {
   $("#content").innerHTML =
     `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
   try {
-    if (["mine", "team", "stats", "reports", "central", "assign"].includes(SEC)) {
+    if (["mine", "team", "stats", "reports", "central", "assign", "mail"].includes(SEC)) {
       const d = await api("/api/institutions?year=" + encodeURIComponent(VYEAR));
       ROWS = d.rows;
       EDITABLE = d.editable;
@@ -223,6 +269,7 @@ async function render() {
       reports: rReports,
       assign: rAssign,
       central: rCentral,
+      mail: rMail,
       transfers: rTransfers,
       tech: rTech,
     };
@@ -238,6 +285,10 @@ const avgOf = (l) => l.length ? l.reduce((s, x) => s + x.pct, 0) / l.length : 0;
 /* ── الرسوم البيانية ── */
 const CHARTS = [];
 const CH_FONT = { family: "'Segoe UI', Tahoma, sans-serif", size: 12 };
+/** ألوان الرسوم تُقرأ من متغيّرات السمة حتى تتبعها بدل ألوان مثبّتة. */
+function cssVar(n) {
+  return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+}
 function destroyCharts() {
   while (CHARTS.length) CHARTS.pop().destroy();
 }
@@ -250,8 +301,11 @@ function drawChart(id, cfg) {
   cfg.options.maintainAspectRatio = false;
   cfg.options.locale = "ar-u-nu-latn";
   cfg.options.plugins = cfg.options.plugins || {};
+  const ink = cssVar("--ink") || "#20302a";
+  const muted = cssVar("--muted") || "#5f6b64";
+  const grid = cssVar("--line") || "#eef2ef";
   cfg.options.plugins.legend = Object.assign(
-    { labels: { font: CH_FONT, color: "#20302a", boxWidth: 12, padding: 12 } },
+    { labels: { font: CH_FONT, color: ink, boxWidth: 12, padding: 12 } },
     cfg.options.plugins.legend || {},
   );
   cfg.options.plugins.tooltip = Object.assign(
@@ -261,8 +315,8 @@ function drawChart(id, cfg) {
   if (cfg.options.scales) {
     for (const k of Object.keys(cfg.options.scales)) {
       const sc = cfg.options.scales[k];
-      sc.ticks = Object.assign({ font: CH_FONT, color: "#5f6b64" }, sc.ticks || {});
-      sc.grid = Object.assign({ color: "#eef2ef" }, sc.grid || {});
+      sc.ticks = Object.assign({ font: CH_FONT, color: muted }, sc.ticks || {});
+      sc.grid = Object.assign({ color: grid }, sc.grid || {});
     }
   }
   CHARTS.push(new Chart(el, cfg));
@@ -396,11 +450,24 @@ async function openEval(id) {
     $("#content").innerHTML = `<div class="tip red">${esc(e.message)}</div>`;
     return;
   }
-  EV = { inst: x, defs: K, raw: JSON.parse(JSON.stringify(x.kpi || {})) };
+  // القيم من الخادم لا من نسخة الجدول في المتصفح، فقد تكون قديمة
+  EV = { inst: x, defs: K, raw: JSON.parse(JSON.stringify(K.kpi ?? {})), rev: K.rev ?? 0 };
   const assumed = K.kpis.filter((k) => k.assumed).map((k) => k.n);
   const tuned = K.kpis.filter((k) => k.tgtEff !== k.tgtBase).map((k) => k.n);
 
-  let h = `<div class="evhead"><div>
+  let h = `<div class="evbar" id="evBar">
+     <div class="eb-name">${esc(x.name)}</div>
+     <div class="eb-stats">
+       <span class="eb-s"><b id="ebPts">—</b><i>نقطة من ${fmt(K.cap)}</i></span>
+       <span class="eb-s"><b id="ebPct">—</b><i>النتيجة</i></span>
+       <span class="eb-s"><b id="ebLvl">—</b><i>التقدير</i></span>
+       <span class="eb-s"><b id="ebFill">0 / ${K.kpis.length}</b><i>المؤشرات</i></span>
+     </div>
+     <span class="eb-save" id="ebSave">لا تغييرات</span>
+     ${EDITABLE ? '<button class="btn sm" id="evSave">حفظ الآن</button>' : ""}
+     <button class="btn sm ghost" id="evBackTop">رجوع</button>
+   </div>
+   <div class="evhead"><div>
      <div style="font-size:12px;opacity:.85">${x.id} · ${esc(x.sector)} · ${esc(x.team)} · ${
     esc(x.stage ?? "مرحلة غير مسجَّلة")
   }${x.stageTop ? " ← " + esc(x.stageTop) : ""} · ${esc(x.gender ?? "جنس غير مسجَّل")}${
@@ -409,11 +476,32 @@ async function openEval(id) {
      <div style="font-size:16px;font-weight:800;margin-top:3px">${esc(x.name)}</div></div>
      <button class="btn" style="background:rgba(255,255,255,.2)" id="evBack">رجوع</button></div>
    <div class="evbody">
+     <div class="axfilter" id="axFilter">
+       <button class="ytab on" data-ax="0" style="--yc:var(--muted)">كل المحاور</button>
+       ${
+    [1, 2, 3, 4].map((a) =>
+      `<button class="ytab" data-ax="${a}" style="--yc:${AXC[a]}">${esc(META.axname[a])}
+        <span class="ybadge">${K.kpis.filter((k) => k.ax === a).length}</span></button>`
+    ).join("")
+  }
+       <button class="ytab" data-ax="-1" style="--yc:var(--amber)">غير المكتملة
+         <span class="ybadge" id="axLeft">—</span></button>
+     </div>
      <div class="tip">أدخل الأرقام الخام لكل مؤشر كما هي من أدوات القياس. نسبة التنفيذ تُحسب في الخادم
        ولها حد أعلى 100%، والتقدير يظهر بعد استكمال المؤشرات الـ${K.kpis.length} كلها.</div>`;
   if (tuned.length) {
     h += `<div class="tip amber">مستهدفات مضبوطة من الحساب الفني في ${tuned.length} مؤشراً
       (${tuned.join(" · ")}). المستهدف الأصلي من الخطة يظهر تحت كل خانة.</div>`;
+  }
+  if (K.editingBy) {
+    h += `<div class="tip red"><b>${esc(K.editingBy.name)} (${esc(K.editingBy.id)})</b>
+      فتح تقييم هذه المؤسسة خلال الدقائق الماضية. التنسيق قبل الإدخال يمنع ضياع العمل،
+      وإن حفظ قبلك فسيُرفض حفظك حتى تحدّث الشاشة.</div>`;
+  }
+  if (K.savedByName) {
+    h += `<div class="tip">آخر حفظ: <b>${esc(K.savedByName)}</b> في ${
+      new Date(K.savedAt).toLocaleString("ar-BH-u-nu-latn")
+    } · المراجعة ${K.rev}.</div>`;
   }
   if (assumed.length) {
     h += `<div class="tip red">المؤشر ${
@@ -490,25 +578,27 @@ async function openEval(id) {
   h += `<h4 class="blk">النتيجة حسب المسطرة المعتمدة</h4>
    <div id="evSum"></div>
    <h4 class="blk">الأداء التراكمي والدورات السابقة</h4>
-   <div id="evHist"><div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div></div>
+   <p class="sl">تُحمَّل عند الطلب حتى لا تُثقل شاشة الإدخال.</p>
+   <button class="btn ghost" id="evHistBtn">عرض المقارنة بالدورات السابقة</button>
+   <div id="evHist"></div>
    <h4 class="blk">ملاحظات عامة على أداء المؤسسة وتقييمها</h4>
    <textarea id="evNotes" rows="5"
      placeholder="ملاحظة اختيارية: ما لوحظ في الزيارة، وما يفسّر النتيجة، وما يُقترح للمتابعة">${
-    esc(x.notes ?? "")
+    esc(K.notes ?? "")
   }</textarea>
    <h4 class="blk">قصة نجاح</h4>
-   <label class="ckrow"><input type="checkbox" id="stOn" ${x.story?.on ? "checked" : ""}>
+   <label class="ckrow"><input type="checkbox" id="stOn" ${K.story?.on ? "checked" : ""}>
      <span>ترشيح هذه المؤسسة كقصة نجاح</span></label>
-   <div id="stBox" ${x.story?.on ? "" : "hidden"}>
+   <div id="stBox" ${K.story?.on ? "" : "hidden"}>
      <p class="sl">الترشيح توصية منك؛ اعتماد قصص النجاح من رئيس الفريق وبحد أقصى
        ${META.maxPicks} مؤسسات لكل فريق من ضمن الأعلى أداءً.</p>
      <textarea id="stText" rows="5"
        placeholder="ما الذي يستحق أن يُروى؟ الممارسة، وما تغيّر فعلاً، والنتائج المقيسة إن وُجدت">${
-    esc(x.story?.text ?? "")
+    esc(K.story?.text ?? "")
   }</textarea>
    </div>
    <div style="display:flex;gap:9px;margin-top:15px;flex-wrap:wrap;align-items:center">
-     ${EDITABLE ? '<button class="btn" id="evSave">حفظ التقييم</button>' : ""}
+     ${EDITABLE ? '<button class="btn" id="evSaveBottom">حفظ التقييم</button>' : ""}
      <button class="btn ghost" id="evCancel">إلغاء</button>
      <span id="evProg" style="font-size:12px;color:var(--muted);font-weight:700"></span></div>
    </div>`;
@@ -535,6 +625,7 @@ async function openEval(id) {
       else EV.raw[n][f] = el.value;
       if (!Object.keys(EV.raw[n]).length) delete EV.raw[n];
       if (f !== "note") evCalc();
+      evTouch();
     };
   });
   $("#content").querySelectorAll("[data-note]").forEach((b) =>
@@ -548,16 +639,65 @@ async function openEval(id) {
   if ($("#stOn")) {
     $("#stOn").onchange = () => {
       $("#stBox").hidden = !$("#stOn").checked;
+      evTouch();
     };
   }
+  ["#evNotes", "#stText"].forEach((id) => {
+    const el = $(id);
+    if (el) el.oninput = evTouch;
+  });
+  // حفظ تلقائي بعد سكون قصير، مع بيان حالة صريح حتى لا يشكّ المقيّم في الحفظ
+  const marks = (t, cls) => {
+    const el = $("#ebSave");
+    if (el) {
+      el.textContent = t;
+      el.className = "eb-save " + (cls ?? "");
+    }
+  };
+  EV.dirty = false;
+  EV.timer = null;
+  EV.mark = marks;
   const back = () => {
     SEC = EVBACK ?? "mine";
     render();
   };
   $("#evBack").onclick = $("#evCancel").onclick = back;
-  if ($("#evSave")) $("#evSave").onclick = evSave;
+  if ($("#evBackTop")) $("#evBackTop").onclick = back;
+  if ($("#evSave")) $("#evSave").onclick = () => evSave(false);
+  if ($("#evSaveBottom")) $("#evSaveBottom").onclick = () => evSave(false);
+  marks(EDITABLE ? "الحفظ تلقائي" : "عرض فقط", "");
   evCalc();
-  evHistory(id);
+  $("#evHistBtn").onclick = () => {
+    $("#evHistBtn").disabled = true;
+    $("#evHist").innerHTML =
+      `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
+    evHistory(id);
+  };
+  wireAxFilter();
+}
+
+/** فلتر المحاور: يخفي صناديق المحاور غير المختارة أو المؤشرات المكتملة. */
+function wireAxFilter() {
+  const btns = [...document.querySelectorAll("#axFilter [data-ax]")];
+  btns.forEach((b) =>
+    b.onclick = () => {
+      btns.forEach((x) => x.classList.toggle("on", x === b));
+      const a = Number(b.dataset.ax);
+      document.querySelectorAll("#content .axbox").forEach((box, i) => {
+        box.hidden = a > 0 && i + 1 !== a;
+      });
+      document.querySelectorAll("#content .frow").forEach((row) => {
+        const n = row.querySelector("[data-note]")?.dataset.note;
+        row.hidden = a === -1 && !!n && EV.raw[n] !== undefined &&
+          $("#r" + n)?.querySelector(".chip")?.textContent.includes("نسبة التنفيذ");
+      });
+      if (a === -1) {
+        document.querySelectorAll("#content .axbox").forEach((box) => {
+          box.hidden = ![...box.querySelectorAll(".frow")].some((r) => !r.hidden);
+        });
+      }
+    }
+  );
 }
 
 /** الدورات السابقة والأداء التراكمي — عرض فقط. */
@@ -670,7 +810,16 @@ function evCalc() {
     const P = evRow(k, EV.raw[k.n]);
     const box = $("#r" + k.n);
     if (P === null) {
-      if (box) box.innerHTML = '<span class="chip">لم يُملأ</span>';
+      // المؤشر النسبي يحتاج المقام والبسط معاً؛ نبيّن الناقص بدل صمت «لم يُملأ»
+      const raw = EV.raw[k.n] ?? {};
+      const needDen = k.mode === "نسبة" && k.denom && !k.centralField;
+      let msg = "لم يُملأ";
+      if (needDen && raw.j && !raw.i) msg = "بانتظار " + k.denom;
+      else if (needDen && raw.i && !raw.j) msg = "بانتظار " + k.numer;
+      else if (k.centralField && k.centralValue === null && raw.j) msg = "المقام المركزي غير مُدخل";
+      if (box) {
+        box.innerHTML = `<span class="chip${msg === "لم يُملأ" ? "" : " warn"}">${esc(msg)}</span>`;
+      }
       return;
     }
     filled++;
@@ -697,6 +846,27 @@ function evCalc() {
   const pct = complete ? Math.round(pts / K.cap * 1000) / 10 : null;
   $("#evProg").textContent = `المؤشرات المملوءة: ${filled} من ${K.kpis.length}` +
     (complete ? " — مكتمل" : " — قيد التقييم");
+  // الشريط اللاصق: النتيجة أمام المقيّم دائماً وهو ينزل بين المؤشرات
+  const setb = (id, v) => {
+    const el = $(id);
+    if (el) el.textContent = v;
+  };
+  setb("#ebPts", pts.toFixed(1));
+  setb("#ebPct", pct === null ? "—" : pct.toFixed(1) + "%");
+  setb("#ebFill", `${filled} / ${K.kpis.length}`);
+  const lvEl = $("#ebLvl");
+  if (lvEl) {
+    let L2 = META.rubric[0];
+    if (pct !== null) {
+      META.rubric.forEach((b) => {
+        if (pct >= b.a) L2 = b;
+      });
+    }
+    lvEl.textContent = pct === null ? "بعد الاكتمال" : L2.n;
+    lvEl.style.color = pct === null ? "" : lvlColor(L2.n);
+  }
+  const left = $("#axLeft");
+  if (left) left.textContent = K.kpis.length - filled;
   let h = `<div class="tbl"><table><thead><tr><th style="min-width:170px">المحور</th>
     <th style="width:120px">النقاط</th><th style="width:100px">نسبة التنفيذ</th>
     <th style="width:130px">التقدير</th></tr></thead><tbody>`;
@@ -729,7 +899,19 @@ function evCalc() {
   }</td></tr></tbody></table></div>`;
   $("#evSum").innerHTML = h;
 }
-async function evSave() {
+/** كل تعديل يُعلَّم ويُحفظ بعد ثانية ونصف من السكون. */
+function evTouch() {
+  if (!EDITABLE || !EV || EV.conflict) return;
+  EV.dirty = true;
+  EV.mark("تغييرات غير محفوظة", "warn");
+  clearTimeout(EV.timer);
+  EV.timer = setTimeout(() => evSave(true), 1500);
+}
+
+async function evSave(auto) {
+  if (!EV) return;
+  clearTimeout(EV.timer);
+  EV.mark("جارٍ الحفظ…", "");
   try {
     const r = await api("/api/evaluation", {
       method: "POST",
@@ -738,14 +920,44 @@ async function evSave() {
         kpi: EV.raw,
         notes: $("#evNotes").value,
         story: { on: $("#stOn").checked, text: $("#stText").value },
+        rev: EV.rev,
       },
     });
-    toast(`حُفظ التقييم — ${r.status} · ${r.filled} من ${r.total} مؤشراً`);
-    SEC = EVBACK ?? "mine";
-    await render();
+    EV.dirty = false;
+    EV.rev = r.rev ?? EV.rev;
+    EV.mark(`محفوظ · ${r.filled} من ${r.total}`, "ok");
+    if (!auto) {
+      toast(`حُفظ التقييم — ${r.status} · ${r.filled} من ${r.total} مؤشراً`);
+      SEC = EVBACK ?? "mine";
+      await render();
+    }
   } catch (e) {
+    // تعارض: لا نكتب فوق عمل غيرنا ولا نكرّر المحاولة تلقائياً
+    if (e.conflict) {
+      clearTimeout(EV.timer);
+      EV.conflict = true;
+      EV.mark("تعارض — حدّث الشاشة", "err");
+      showConflict(e.message);
+      return;
+    }
+    EV.mark("تعذّر الحفظ — أعد المحاولة", "err");
     toast(e.message, true);
   }
+}
+
+/** لافتة تعارض ثابتة: الخيار الوحيد المعروض هو التحديث، لا الكتابة فوق الآخر. */
+function showConflict(msg) {
+  if (document.getElementById("evConf")) return;
+  const d = document.createElement("div");
+  d.id = "evConf";
+  d.className = "tip red";
+  d.style.margin = "0 0 12px";
+  d.innerHTML = `<b>تعذّر الحفظ — تعارض تحرير.</b> ${esc(msg)}
+    <div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn sm" id="evReload">تحديث الشاشة بآخر نسخة</button></div>`;
+  const body = $("#content").querySelector(".evbody");
+  if (body) body.prepend(d);
+  $("#evReload").onclick = () => openEval(EV.inst.id);
 }
 
 /* ── لوحة الفريق ── */
@@ -892,7 +1104,7 @@ function statsCharts() {
       datasets: [{
         data: dist,
         backgroundColor: META.rubric.map((b) => lvlColor(b.n)),
-        borderColor: "#fff",
+        borderColor: cssVar("--card") || "#fff",
         borderWidth: 2,
       }],
     },
@@ -935,7 +1147,7 @@ function statsCharts() {
         {
           label: "لم تكتمل",
           data: teams.map((t) => ROWS.filter((x) => x.team === t && x.status !== "مكتمل").length),
-          backgroundColor: "#dfe6e0",
+          backgroundColor: cssVar("--line") || "#dfe6e0",
           borderRadius: 5,
         },
       ],
@@ -1033,6 +1245,143 @@ function openStory(id) {
       $("#modal").classList.remove("on");
       toast("حُفظت القصة");
       await render();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
+/* ── المراسلات ── */
+let THREADS = [], CONTACTS = [];
+
+async function rMail() {
+  const [t, c] = await Promise.all([api("/api/threads"), api("/api/contacts")]);
+  THREADS = t.rows;
+  CONTACTS = c.rows;
+  const un = t.unread;
+  let h = `<h3 class="st">المراسلات</h3>
+  <p class="sl">مراسلة من يشاركك فريقاً ومن يشرف على نطاقك. يمكن ربط الموضوع بمؤسسة
+    فيصير جزءاً من سجل عملها.</p>
+  <div style="display:flex;gap:9px;margin-bottom:13px;flex-wrap:wrap;align-items:center">
+    <button class="btn" id="mlNew">موضوع جديد</button>
+    <span class="asgnote${un ? " on" : ""}">${un ? `${un} رسالة غير مقروءة` : "لا رسائل غير مقروءة"}</span>
+  </div>`;
+  if (!THREADS.length) {
+    return h + `<div class="card" style="text-align:center;color:var(--muted)">
+      لا مراسلات بعد. ابدأ موضوعاً جديداً.</div>`;
+  }
+  h += `<div class="tbl"><table><thead><tr><th style="width:44px"></th><th>الموضوع</th>
+    <th style="width:150px">المؤسسة</th><th style="width:130px">المشاركون</th>
+    <th style="width:120px">آخر رسالة</th><th style="width:70px"></th></tr></thead><tbody>` +
+    THREADS.map((x) =>
+      `<tr class="${x.unread ? "unreadrow" : ""}">
+      <td>${x.unread ? `<span class="badge">${x.unread}</span>` : ""}</td>
+      <td class="r"><b>${esc(x.subject)}</b>
+        <div class="ogl">${x.count} رسالة · بدأه ${esc(x.by)}</div></td>
+      <td>${x.instName ? esc(x.instName) : "—"}</td>
+      <td class="mono" style="font-size:11px">${x.members.join(" · ")}</td>
+      <td style="font-size:11px">${new Date(x.last).toLocaleString("ar-BH-u-nu-latn")}</td>
+      <td><button class="btn sm" data-th-open="${x.id}">فتح</button></td></tr>`
+    ).join("") + `</tbody></table></div>`;
+  return h;
+}
+
+async function openThread(id) {
+  $("#content").innerHTML =
+    `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
+  let d;
+  try {
+    d = await api("/api/thread?id=" + encodeURIComponent(id));
+  } catch (e) {
+    $("#content").innerHTML = `<div class="tip red">${esc(e.message)}</div>`;
+    return;
+  }
+  const nm = (u) => d.names[u] ? `${d.names[u]} (${u})` : u;
+  $("#content").innerHTML = `
+   <div class="evhead"><div>
+     <div style="font-size:12px;opacity:.85">${
+    d.thread.instName ? esc(d.thread.instName) + " · " : ""
+  }${d.thread.members.length} مشاركين</div>
+     <div style="font-size:16px;font-weight:800;margin-top:3px">${esc(d.thread.subject)}</div></div>
+     <button class="btn" style="background:rgba(255,255,255,.2)" id="mlBack">رجوع</button></div>
+   <div class="evbody">
+     <div class="msgs" id="msgs">${
+    d.messages.map((m) =>
+      `<div class="msg${m.by === ME.id ? " mine" : ""}">
+        <div class="msg-h">${esc(nm(m.by))} · ${new Date(m.at).toLocaleString("ar-BH-u-nu-latn")}</div>
+        <div class="msg-b">${esc(m.text)}</div></div>`
+    ).join("")
+  }</div>
+     <label class="kel" style="margin-top:14px">ردّك</label>
+     <textarea id="mlText" rows="3" placeholder="اكتب ردّك…"></textarea>
+     <div style="margin-top:10px"><button class="btn" id="mlSend">إرسال</button></div>
+   </div>`;
+  $("#mlBack").onclick = () => {
+    SEC = "mail";
+    render();
+  };
+  $("#mlSend").onclick = async () => {
+    const text = $("#mlText").value.trim();
+    if (!text) return toast("اكتب نص الرسالة", true);
+    try {
+      await api("/api/message", { method: "POST", body: { threadId: id, text } });
+      await openThread(id);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+  const box = $("#msgs");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+function openNewThread() {
+  const insts = (ROWS ?? []).slice(0, 400);
+  $("#modalBody").innerHTML = `
+   <div class="mhead"><div>
+     <div style="font-size:12px;opacity:.85">المراسلات</div>
+     <div style="font-size:16px;font-weight:800;margin-top:3px">موضوع جديد</div></div>
+     <button class="btn" style="background:rgba(255,255,255,.2)" id="mClose">إغلاق</button></div>
+   <div class="mbody">
+     <div class="fld" style="margin-bottom:12px"><label>الموضوع</label>
+       <input id="thSubj" style="width:100%" placeholder="مثال: استيضاح بشأن المؤشر 8"></div>
+     <div class="fld" style="margin-bottom:12px"><label>ربط بمؤسسة (اختياري)</label>
+       <select id="thInst" style="width:100%"><option value="">بلا ربط</option>${
+    insts.map((x) => `<option value="${x.id}">${esc(x.id)} · ${esc(x.name)}</option>`).join("")
+  }</select></div>
+     <label class="kel">المستلمون</label>
+     <div class="contacts">${
+    CONTACTS.map((a) =>
+      `<label class="ckrow" style="padding:8px 12px;margin-bottom:6px">
+        <input type="checkbox" class="thto" value="${a.id}">
+        <span><b>${esc(a.name)}</b> <span class="mono">${a.id}</span>
+          <div style="font-weight:400;font-size:11px;color:var(--muted)">${esc(a.title)}${
+        a.team ? " · " + esc(a.team) : ""
+      }</div></span></label>`
+    ).join("")
+  }</div>
+     <label class="kel" style="margin-top:12px">الرسالة</label>
+     <textarea id="thText" rows="4"></textarea>
+     <div style="display:flex;gap:9px;margin-top:14px">
+       <button class="btn" id="thSend">إرسال</button>
+       <button class="btn ghost" id="thCancel">إلغاء</button></div>
+   </div>`;
+  $("#modal").classList.add("on");
+  $("#mClose").onclick = $("#thCancel").onclick = () => $("#modal").classList.remove("on");
+  $("#thSend").onclick = async () => {
+    const to = [...document.querySelectorAll(".thto:checked")].map((c) => c.value);
+    try {
+      const r = await api("/api/threads", {
+        method: "POST",
+        body: {
+          subject: $("#thSubj").value,
+          text: $("#thText").value,
+          to,
+          instId: $("#thInst").value || undefined,
+        },
+      });
+      $("#modal").classList.remove("on");
+      toast("أُرسل الموضوع");
+      await openThread(r.id);
     } catch (e) {
       toast(e.message, true);
     }
@@ -1444,7 +1793,7 @@ function repCharts(D) {
       datasets: [{
         data: dist,
         backgroundColor: META.rubric.map((b) => lvlColor(b.n)),
-        borderColor: "#fff",
+        borderColor: cssVar("--card") || "#fff",
         borderWidth: 2,
       }],
     },
@@ -2537,6 +2886,8 @@ function wire() {
   );
   document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openEval(b.dataset.open));
   if ($("#mineAdd")) $("#mineAdd").onclick = openAdd;
+  if ($("#mlNew")) $("#mlNew").onclick = openNewThread;
+  document.querySelectorAll("[data-th-open]").forEach((b) => b.onclick = () => openThread(b.dataset.thOpen));
   document.querySelectorAll("[data-move]").forEach((b) => b.onclick = () => openMove(b.dataset.move));
   document.querySelectorAll("[data-tok]").forEach((b) => b.onclick = () => trDecide(b.dataset.tok, true));
   document.querySelectorAll("[data-tno]").forEach((b) => b.onclick = () => trDecide(b.dataset.tno, false));

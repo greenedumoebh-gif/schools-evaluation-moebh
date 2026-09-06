@@ -53,6 +53,8 @@ export interface Account {
   /** فرق رئيس الفرق — تُستخدم مع الدور super وحده */
   teams?: string[];
   title: string;
+  /** سمة الألوان المختارة — تفضيل شخصي يُحفظ مع الحساب */
+  theme?: string;
   hash?: string;
   salt?: string;
   mustChange?: boolean;
@@ -108,6 +110,8 @@ export interface Evaluation {
   /** نسب المحاور — محسوبة في الخادم، لا تُقبل من العميل */
   axes: Record<string, number | null>;
   filled: number;
+  /** رقم مراجعة يتزايد مع كل حفظ — أساس كشف التعارض بين محرّرَين */
+  rev?: number;
   status: "لم يبدأ" | "قيد التقييم" | "مكتمل";
   notes?: string;
   /** ترشيح المؤسسة كقصة نجاح من المقيّم أو رئيس الفريق مع تعليقه */
@@ -146,6 +150,7 @@ export const META = seed as unknown as {
   denomMap: Record<string, string>;
   centralFields: [string, string][];
   sectors: string[];
+  themes: { id: string; name: string; desc: string; sw: string[] }[];
   /** الجهة المُصدِرة والمعتمدون لكل فريق — كما اعتُمدت في أدوات التقارير السابقة */
   issuers: Record<string, {
     org: string;
@@ -470,6 +475,70 @@ export async function setTransfer(t: Transfer) {
 }
 export async function getTransfer(id: string): Promise<Transfer | null> {
   return (await kv.get<Transfer>(["transfer", id])).value;
+}
+
+/**
+ * أثر تحرير خفيف: من فتح تقييم هذه المؤسسة ومتى.
+ * يُستخدم للتنبيه المسبق فقط، والحسم الفعلي للتعارض على رقم المراجعة.
+ */
+export const EDIT_FRESH_MS = 3 * 60 * 1000;
+export async function markEditing(instId: string, by: string, year: string) {
+  await kv.set(["editing", year, instId], { by, at: Date.now() }, { expireIn: EDIT_FRESH_MS });
+}
+export async function getEditing(instId: string, year: string) {
+  const v = (await kv.get<{ by: string; at: number }>(["editing", year, instId])).value;
+  if (!v || Date.now() - v.at > EDIT_FRESH_MS) return null;
+  return v;
+}
+
+// ── المراسلات: مواضيع بين المستخدمين، وقد تُربط بمؤسسة ──
+export interface Thread {
+  id: string;
+  subject: string;
+  /** المؤسسة المرتبطة إن وُجدت — تجعل الرسالة جزءاً من سجل عملها */
+  instId: string | null;
+  instName: string | null;
+  team: string | null;
+  members: string[];
+  by: string;
+  at: string;
+  last: string;
+  lastBy: string;
+  count: number;
+}
+export interface Message {
+  id: string;
+  threadId: string;
+  by: string;
+  at: string;
+  text: string;
+}
+export async function getThread(id: string) {
+  return (await kv.get<Thread>(["thread", id])).value;
+}
+export async function setThread(t: Thread) {
+  await kv.set(["thread", t.id], t);
+}
+/** فهرس لكل مستخدم: الموضوع وعدد غير المقروء فيه. */
+export async function setInbox(user: string, threadId: string, unread: number, at: string) {
+  await kv.set(["inbox", user, threadId], { threadId, unread, at });
+}
+export async function listInbox(user: string) {
+  const out: { threadId: string; unread: number; at: string }[] = [];
+  for await (
+    const e of kv.list<{ threadId: string; unread: number; at: string }>({
+      prefix: ["inbox", user],
+    })
+  ) out.push(e.value);
+  return out.sort((a, b) => b.at.localeCompare(a.at));
+}
+export async function addMessage(m: Message) {
+  await kv.set(["msgs", m.threadId, m.at + "-" + m.id], m);
+}
+export async function listMessages(threadId: string) {
+  const out: Message[] = [];
+  for await (const e of kv.list<Message>({ prefix: ["msgs", threadId] })) out.push(e.value);
+  return out;
 }
 
 // ── سجل التدقيق ──

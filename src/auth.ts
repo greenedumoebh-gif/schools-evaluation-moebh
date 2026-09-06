@@ -74,7 +74,7 @@ export function cookieHeader(sid: string, secure: boolean): string {
 
 // ── مصفوفة الصلاحيات ──
 export const PERMS: Record<Role, string[]> = {
-  eval: ["mine", "central", "stats", "transfers", "eval:write", "central:write", "transfer:ask"],
+  eval: ["mine", "central", "stats", "transfers", "mail", "eval:write", "central:write", "transfer:ask"],
   lead: [
     "team",
     "mine",
@@ -83,6 +83,7 @@ export const PERMS: Record<Role, string[]> = {
     "top",
     "reports",
     "transfers",
+    "mail",
     "assign",
     "eval:write",
     "inst:write",
@@ -102,6 +103,7 @@ export const PERMS: Record<Role, string[]> = {
     "top",
     "reports",
     "transfers",
+    "mail",
     "eval:write",
     "central:write",
     "assign:write",
@@ -121,6 +123,7 @@ export const PERMS: Record<Role, string[]> = {
     "top",
     "reports",
     "transfers",
+    "mail",
     "eval:write",
     "central:write",
     "assign:write",
@@ -138,6 +141,7 @@ export const PERMS: Record<Role, string[]> = {
     "top",
     "reports",
     "transfers",
+    "mail",
     "assign",
     "central:write",
     "inst:write",

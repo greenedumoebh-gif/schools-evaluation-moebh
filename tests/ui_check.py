@@ -137,6 +137,68 @@ with sync_playwright() as p:
     )
     lg.close()
 
+    # المراسلات
+    chk("mail" in navs, "شاشة المراسلات في القائمة")
+    pg.locator('#nav a[data-s="mail"]').click()
+    pg.wait_for_selector("#mlNew", timeout=15000)
+    pg.click("#mlNew")
+    pg.wait_for_selector("#thSend", timeout=15000)
+    cids = pg.evaluate("()=>[...document.querySelectorAll('.thto')].map(c=>c.value)")
+    chk(len(cids) > 0 and not any(i.startswith("Z2-") for i in cids), f"جهات الاتصال ضمن النطاق ({len(cids)})")
+    chk("Z1-L" in cids and "TECH" in cids, "قائد الفريق والحساب الفني ضمن المتاح")
+    pg.fill("#thSubj", "استيضاح من الفحص")
+    pg.check('.thto[value="Z1-L"]')
+    pg.fill("#thText", "نص رسالة الفحص.")
+    pg.click("#thSend")
+    pg.wait_for_selector("#msgs", timeout=15000)
+    chk("نص رسالة الفحص" in pg.locator("#msgs").inner_text(), "الرسالة الأولى ظاهرة في الموضوع")
+    pg.click("#mlBack")
+    pg.wait_for_selector("#content table", timeout=15000)
+    chk("استيضاح من الفحص" in pg.locator("#content").inner_text(), "الموضوع في صندوق المرسل")
+    pg.locator('#nav a[data-s="mine"]').click()
+    pg.wait_for_selector("#content tbody tr", timeout=15000)
+
+    # سمات الألوان
+    def lum(c):
+        v = [int(x) for x in c[c.find("(") + 1:c.find(")")].split(",")[:3]]
+        return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255
+
+    chk(pg.locator(".thbtn").count() == 4, f"أربع سمات للاختيار ({pg.locator('.thbtn').count()})")
+    chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "green", "السمة الافتراضية خضراء")
+    base_bg = pg.evaluate("()=>getComputedStyle(document.body).backgroundColor")
+    pg.locator('[data-th="dark"]').click()
+    pg.wait_for_timeout(1500)
+    dark_bg = pg.evaluate("()=>getComputedStyle(document.body).backgroundColor")
+    dark_ink = pg.evaluate("()=>getComputedStyle(document.body).color")
+    chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "dark", "التبديل إلى الداكن")
+    chk(dark_bg != base_bg, "الخلفية تتغيّر فعلاً بتغيّر السمة")
+    chk(
+        lum(dark_bg) < 0.25 and lum(dark_ink) > 0.6,
+        f"تباين السمة الداكنة سليم (خلفية {lum(dark_bg):.2f} · نص {lum(dark_ink):.2f})",
+    )
+    pg.emulate_media(media="print")
+    pg.wait_for_timeout(300)
+    pbg = pg.evaluate("()=>getComputedStyle(document.body).backgroundColor")
+    pink = pg.evaluate("()=>getComputedStyle(document.body).color")
+    chk(
+        lum(pbg) > 0.8 and lum(pink) < 0.4,
+        f"الطباعة تعود فاتحة رغم السمة الداكنة (خلفية {lum(pbg):.2f})",
+    )
+    pg.emulate_media(media="screen")
+    pg.wait_for_timeout(300)
+    pg.locator('#nav a[data-s="stats"]').click()
+    pg.wait_for_selector("#content canvas", timeout=15000)
+    pg.wait_for_timeout(700)
+    chcol = pg.evaluate(
+        "()=>{const c=Chart.getChart('chDist');return c?c.options.plugins.legend.labels.color:''}"
+    )
+    chk(chcol.replace(" ", "") != "#20302a", f"ألوان الرسوم تتبع السمة ({chcol})")
+    pg.locator('[data-th="green"]').click()
+    pg.wait_for_timeout(1200)
+    chk(pg.evaluate("()=>document.documentElement.dataset.theme") == "green", "العودة إلى الأخضر")
+    pg.locator('#nav a[data-s="mine"]').click()
+    pg.wait_for_selector("#content tbody tr", timeout=15000)
+
     # اسم المنصة ورقم الإصدار
     chk(
         "منصة تقييم المؤسسات التعليمية" in pg.title(),
@@ -223,6 +285,47 @@ with sync_playwright() as p:
     pg.locator("[data-open]").first.click()
     pg.wait_for_selector(".axbox", timeout=15000)
     chk(pg.locator(".axbox").count() == 4, f"أربعة صناديق محاور ({pg.locator('.axbox').count()})")
+
+    # الشريط اللاصق · الحالة الجزئية · الفلتر · الحفظ التلقائي · المقارنة بالزر
+    chk(
+        pg.evaluate("()=>getComputedStyle(document.getElementById('evBar')).position") == "sticky",
+        "شريط النتيجة لاصق أعلى الشاشة",
+    )
+    chk(pg.locator("#ebSave").inner_text() == "الحفظ تلقائي", "بيان الحفظ التلقائي ظاهر")
+    pg.evaluate(
+        """()=>{const el=document.querySelector('#content [data-k="1"][data-f="j"]');
+        el.value=8;el.dispatchEvent(new Event('input'))}"""
+    )
+    pg.wait_for_timeout(300)
+    chk("بانتظار" in pg.locator("#r1").inner_text(), "المؤشر النسبي يبيّن الخانة الناقصة")
+    chk("غير محفوظة" in pg.locator("#ebSave").inner_text(), "تُعلَّم التغييرات غير المحفوظة")
+    pg.evaluate(
+        """()=>{const el=document.querySelector('#content [data-k="1"][data-f="i"]');
+        el.value=10;el.dispatchEvent(new Event('input'))}"""
+    )
+    pg.wait_for_timeout(300)
+    chk(pg.locator("#ebPts").inner_text() != "—", f"النقاط تتحدث لحظياً ({pg.locator('#ebPts').inner_text()})")
+    chk(pg.locator("#ebFill").inner_text().startswith("1 /"), "عدّاد المؤشرات في الشريط")
+    pg.wait_for_timeout(2600)
+    chk("محفوظ" in pg.locator("#ebSave").inner_text(), f"الحفظ التلقائي ({pg.locator('#ebSave').inner_text()})")
+    n_all = pg.locator("#content .frow:visible").count()
+    pg.locator('#axFilter [data-ax="2"]').click()
+    pg.wait_for_timeout(300)
+    n_ax2 = pg.locator("#content .frow:visible").count()
+    chk(0 < n_ax2 < n_all, f"فلتر المحور الثاني ({n_all} ← {n_ax2})")
+    pg.locator('#axFilter [data-ax="-1"]').click()
+    pg.wait_for_timeout(300)
+    chk(
+        pg.locator("#content .frow:visible").count() == n_all - 1,
+        "فلتر غير المكتملة يستبعد المؤشر المكتمل",
+    )
+    pg.locator('#axFilter [data-ax="0"]').click()
+    pg.wait_for_timeout(300)
+    chk(pg.locator("#content .frow:visible").count() == n_all, "العودة إلى كل المحاور")
+    chk(pg.locator("#evHist canvas").count() == 0, "المقارنة لا تُحمَّل تلقائياً")
+    pg.click("#evHistBtn")
+    pg.wait_for_selector("#evHist .kpi", timeout=15000)
+    chk(pg.locator("#evHist canvas").count() == 1, "المقارنة تُحمَّل عند الطلب")
     chk(pg.locator(".frow").count() == 31, f"31 صف مؤشر ({pg.locator('.frow').count()})")
     chk(pg.locator(".fld .tgt").count() == 35, f"31 خانة مستهدف + 4 مقامات مركزية ({pg.locator('.fld .tgt').count()})")
     chk("مركزي" in pg.locator("#content").inner_text(), "المقام المركزي معلَّم في الشاشة")
@@ -260,7 +363,6 @@ with sync_playwright() as p:
     txt = pg.locator("#evSum").inner_text()
     chk("—" not in pg.locator("#evSum table tbody tr").last.inner_text(), "نتيجة المؤسسة محسوبة بعد الاكتمال")
 
-    pg.wait_for_selector("#evHist .kpi", timeout=15000)
     chk(pg.locator("#evHist canvas").count() == 1, "رسم مسار الدورات موجود")
     cbars = pg.evaluate(
         "()=>{const c=Chart.getChart('chCyc');return c?{n:c.data.labels.length,"
@@ -680,6 +782,47 @@ with sync_playwright() as p:
         id2,
     )
     chk(back_col == orig_col, f"أُعيدت المؤسسة إلى مقيّمها الأصلي ({back_col})")
+
+    # ── التقييم المتزامن: تنبيه الحضور ورفض الكتابة فوق عمل الغير ──
+    cf = br.new_page(viewport={"width": 1440, "height": 950})
+    cf.on("pageerror", lambda e: errs.append(str(e)))
+    login(cf, "Z1-1")
+    cf.locator('[data-open="Z1-001"]').click()
+    cf.wait_for_selector("#evBar", timeout=20000)
+    pg6.locator('#nav a[data-s="mine"]').click()
+    pg6.wait_for_selector("#content tbody tr", timeout=20000)
+    pg6.locator('[data-open="Z1-001"]').click()
+    pg6.wait_for_selector("#evBar", timeout=20000)
+    chk("فتح تقييم هذه المؤسسة" in pg6.locator("#content").inner_text(), "تنبيه وجود محرّر آخر")
+    pg6.evaluate(
+        """()=>{for(const f of ['i','j']){const el=document.querySelector(`#content [data-k="2"][data-f="${f}"]`);
+        if(el){el.value=(f==='i'?10:9);el.dispatchEvent(new Event('input'))}}}"""
+    )
+    pg6.wait_for_timeout(2700)
+    chk("محفوظ" in pg6.locator("#ebSave").inner_text(), "الطرف الثاني حفظ أولاً")
+    cf.evaluate(
+        """()=>{for(const f of ['i','j']){const el=document.querySelector(`#content [data-k="1"][data-f="${f}"]`);
+        if(el){el.value=(f==='i'?10:5);el.dispatchEvent(new Event('input'))}}}"""
+    )
+    cf.wait_for_timeout(2900)
+    chk("تعارض" in cf.locator("#ebSave").inner_text(), "الحفظ رُفض بتعارض")
+    chk(cf.locator("#evConf").count() == 1, "لافتة التعارض ظاهرة بخيار التحديث")
+    cf.wait_for_timeout(2200)
+    chk("تعارض" in cf.locator("#ebSave").inner_text(), "لا إعادة محاولة تلقائية بعد التعارض")
+    cf.click("#evReload")
+    cf.wait_for_selector("#evBar", timeout=20000)
+    got = cf.evaluate("""()=>document.querySelector('#content [data-k="2"][data-f="j"]').value""")
+    chk(got == "9", f"التحديث يجلب عمل الطرف الآخر سليماً ({got})")
+    chk(cf.locator("#evConf").count() == 0, "اللافتة تختفي بعد التحديث")
+    cf.evaluate(
+        """()=>{const el=document.querySelector('#content [data-k="12"][data-f="j"]');
+        if(el){el.value='100';el.dispatchEvent(new Event('change'))}}"""
+    )
+    cf.wait_for_timeout(2700)
+    chk("محفوظ" in cf.locator("#ebSave").inner_text(), "الحفظ يعمل بعد التحديث")
+    cf.close()
+    pg6.click("#evBack")
+    pg6.wait_for_selector("#content tbody tr", timeout=20000)
 
     # ── الحساب الفني: محرّر المؤشرات ──
     pg2.wait_for_selector("#tgBox .frow", timeout=20000)

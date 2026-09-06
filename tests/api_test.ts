@@ -318,7 +318,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.13.1", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.17.0", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 chk(health.setup === "done", `حالة التهيئة ${health.setup}`);
@@ -995,6 +995,142 @@ chk(
   "إعادة دخول الحسابات بعد الضبط الشامل",
 );
 
+console.log("\n■ التقييم المتزامن");
+const kd0 = await (await call(ev1.sid, "/api/kpis?inst=" + mine.id)).json();
+chk(typeof kd0.rev === "number", `المراجعة تعود مع التعريف (${kd0.rev})`);
+chk(
+  kd0.kpi !== undefined && kd0.notes !== undefined,
+  "القيم المحفوظة تعود مع التعريف لا من نسخة المتصفح",
+);
+// حضور محرّر آخر
+const kdLead = await (await call(lead1.sid, "/api/kpis?inst=" + mine.id)).json();
+chk(
+  kdLead.editingBy && kdLead.editingBy.id === "Z1-1",
+  `الطرف الثاني يرى من يحرّر (${kdLead.editingBy?.id})`,
+);
+const kdBack = await (await call(ev1.sid, "/api/kpis?inst=" + mine.id)).json();
+chk(kdBack.editingBy?.id === "Z1-L", "الحضور متبادل ولا يمحو أحدهما الآخر");
+// الحفظ بمراجعة قديمة يُرفض
+const cur = await (await call(ev1.sid, "/api/kpis?inst=" + mine.id)).json();
+const okSave = await (await call(lead1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: rawFor(defs, 80),
+  rev: cur.rev,
+})).json();
+chk(okSave.ok && okSave.rev === cur.rev + 1, `الحفظ يرفع المراجعة (${cur.rev} ← ${okSave.rev})`);
+const stale = await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: rawFor(defs, 20),
+  rev: cur.rev,
+});
+chk(stale.status === 409, "الحفظ على مراجعة قديمة يُرفض (409)");
+const conflictBody = await stale.json();
+chk(
+  conflictBody.conflict === true && conflictBody.rev === okSave.rev &&
+    conflictBody.error.includes("حساب آخر"),
+  "الرد يوضّح التعارض ويعطي المراجعة الحالية",
+);
+const afterConflict = (await (await call(tech.sid, "/api/institutions")).json()).rows
+  .find((r: { id: string }) => r.id === mine.id);
+chk(afterConflict.filled === 31, `عمل الطرف الأول لم يُمسح (${afterConflict.filled} مؤشراً)`);
+const fresh = await (await call(ev1.sid, "/api/kpis?inst=" + mine.id)).json();
+const retry = await (await call(ev1.sid, "/api/evaluation", "POST", {
+  instId: mine.id,
+  kpi: rawFor(defs, 95),
+  rev: fresh.rev,
+})).json();
+chk(retry.ok, "الحفظ ينجح بعد تحديث المراجعة");
+
+console.log("\n■ المراسلات");
+const reach = (await (await call(ev1.sid, "/api/contacts")).json()).rows;
+chk(
+  reach.every((a: { id: string }) => !a.id.startsWith("Z2-")) &&
+    reach.some((a: { id: string }) => a.id === "Z1-L") &&
+    reach.some((a: { id: string }) => a.id === "TECH"),
+  `جهات الاتصال ضمن النطاق (${reach.length})`,
+);
+chk(
+  (await call(ev1.sid, "/api/threads", "POST", { subject: "س", text: "ن", to: ["Z2-1"] }))
+    .status === 403,
+  "مراسلة حساب خارج النطاق تُرفض (403)",
+);
+for (
+  const [body, msg] of [
+    [{ subject: "", text: "ن", to: ["Z1-L"] }, "بلا موضوع"],
+    [{ subject: "س", text: "", to: ["Z1-L"] }, "بلا نص"],
+    [{ subject: "س", text: "ن", to: [] }, "بلا مستلمين"],
+  ] as const
+) {
+  chk((await call(ev1.sid, "/api/threads", "POST", body)).status === 400, `${msg} يُرفض (400)`);
+}
+const th = await (await call(ev1.sid, "/api/threads", "POST", {
+  subject: "استيضاح بشأن المؤشر 8",
+  text: "المقام المركزي غير مُدخل",
+  to: ["Z1-L"],
+  instId: mine.id,
+})).json();
+chk(th.ok, "إنشاء موضوع مرتبط بمؤسسة");
+const inboxL = await (await call(lead1.sid, "/api/threads")).json();
+const row = inboxL.rows.find((r: { id: string }) => r.id === th.id);
+chk(row && row.unread === 1 && inboxL.unread >= 1, `المستلم يرى غير مقروء (${row?.unread})`);
+chk(row.instId === mine.id && !!row.instName, "الموضوع مرتبط بالمؤسسة واسمها محفوظ");
+const sender = await (await call(ev1.sid, "/api/threads")).json();
+chk(
+  sender.rows.find((r: { id: string }) => r.id === th.id).unread === 0,
+  "المرسل بلا غير مقروء في موضوعه",
+);
+chk(
+  (await call(ev2.sid, "/api/thread?id=" + th.id)).status === 403,
+  "من ليس عضواً في الموضوع لا يقرأه (403)",
+);
+chk(
+  (await call(ev2.sid, "/api/message", "POST", { threadId: th.id, text: "ن" })).status === 403,
+  "من ليس عضواً لا يردّ (403)",
+);
+const opened = await (await call(lead1.sid, "/api/thread?id=" + th.id)).json();
+chk(opened.messages.length === 1 && opened.names["Z1-1"], "الرسائل والأسماء تعود مع الموضوع");
+const afterOpen = await (await call(lead1.sid, "/api/threads")).json();
+chk(
+  afterOpen.rows.find((r: { id: string }) => r.id === th.id).unread === 0,
+  "فتح الموضوع يصفّر غير المقروء",
+);
+await call(lead1.sid, "/api/message", "POST", { threadId: th.id, text: "سأتابع مع الفني" });
+const senderAfter = await (await call(ev1.sid, "/api/threads")).json();
+chk(
+  senderAfter.rows.find((r: { id: string }) => r.id === th.id).unread === 1,
+  "الرد يرفع غير المقروء عند الطرف الآخر",
+);
+const msgs2 = await (await call(ev1.sid, "/api/thread?id=" + th.id)).json();
+chk(msgs2.messages.length === 2 && msgs2.thread.count === 2, "عدّاد الرسائل صحيح");
+chk(
+  (await call(ev1.sid, "/api/message", "POST", { threadId: th.id, text: "   " })).status === 400,
+  "رسالة فارغة تُرفض (400)",
+);
+
+console.log("\n■ سمة الألوان");
+chk(
+  (await call(ev1.sid, "/api/theme", "POST", { theme: "ghost" })).status === 400,
+  "سمة غير معروفة تُرفض (400)",
+);
+chk(
+  (await call(ev1.sid, "/api/theme", "POST", { theme: "dark" })).status === 200,
+  "كل حساب يغيّر سمته الشخصية",
+);
+chk(
+  (await (await call(ev1.sid, "/api/me")).json()).me.theme === "dark",
+  "السمة محفوظة في الحساب وتعود مع الجلسة",
+);
+chk(
+  ((await (await call(ev2.sid, "/api/me")).json()).me.theme ?? "green") === "green",
+  "سمة حساب لا تؤثر في غيره",
+);
+const themeMeta = (await (await call(ev1.sid, "/api/me")).json()).meta.themes;
+chk(
+  themeMeta.length === 4 && themeMeta.every((t: { id: string; sw: string[] }) => t.sw.length === 3),
+  `أربع سمات معرّفة بثلاثة ألوان لكل منها (${themeMeta.map((t: { id: string }) => t.id).join(" · ")})`,
+);
+await call(ev1.sid, "/api/theme", "POST", { theme: "green" });
+
 console.log("\n■ معاينة الحسابات");
 chk(
   (await call(lead1.sid, "/api/view-as", "POST", { id: "Z1-1" })).status === 403,
@@ -1012,7 +1148,7 @@ chk(
   `الجلسة تعرض حساب المقيّم مع بيان المعاين (${asMe.me.id} · ${asMe.me.viewAs?.by})`,
 );
 chk(
-  JSON.stringify(asMe.perms) === JSON.stringify(["mine", "central", "stats", "transfers"]),
+  JSON.stringify(asMe.perms) === JSON.stringify(["mine", "central", "stats", "transfers", "mail"]),
   `الشاشات المعروضة شاشات المقيّم (${asMe.perms.join(" · ")})`,
 );
 const asRows = (await (await call(tech.sid, "/api/institutions")).json()).rows;
