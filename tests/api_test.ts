@@ -58,6 +58,14 @@ function rawFor(defs: KpiDef[], v: number, skipLast = 0): Record<string, unknown
   return kpi;
 }
 
+// التهيئة تعمل في الخلفية بعد أول طلب؛ ننتظر اكتمالها قبل بدء الفحوص
+for (let i = 0; i < 180; i++) {
+  const h = await (await fetch(`${BASE}/health`)).json();
+  if (h.setup === "done") break;
+  if (h.setup === "failed") throw new Error("فشلت التهيئة: " + h.error);
+  await new Promise((r) => setTimeout(r, 1000));
+}
+
 console.log("■ المصادقة");
 chk((await login("Z1-1", "wrong-password")).status === 401, "كلمة مرور خاطئة تُرفض");
 chk((await login("NOPE")).status === 401, "حساب غير موجود يُرفض");
@@ -310,7 +318,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.8.0", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "1.8.1", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 const archAll = (await (await call(tech.sid, "/api/institutions?year=2025-2026")).json()).rows;

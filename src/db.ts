@@ -19,6 +19,26 @@ try {
 export const kvError = _kvError;
 export const kv = _kv as Deno.Kv;
 
+/**
+ * كتابة دفعة مفاتيح في معاملات ذرّية من عشرة، بدل طلب شبكة لكل مفتاح.
+ * التهيئة الأولى تكتب أكثر من 600 مفتاح، والكتابة المفردة كانت تستغرق
+ * عشرات الثواني على Deno Deploy فتتجاوز مهلة الإقلاع.
+ */
+export async function setMany(entries: [Deno.KvKey, unknown][]) {
+  for (let i = 0; i < entries.length; i += 10) {
+    let at = kv.atomic();
+    for (const [k, v] of entries.slice(i, i + 10)) at = at.set(k, v);
+    await at.commit();
+  }
+}
+export async function deleteMany(keys: Deno.KvKey[]) {
+  for (let i = 0; i < keys.length; i += 10) {
+    let at = kv.atomic();
+    for (const k of keys.slice(i, i + 10)) at = at.delete(k);
+    await at.commit();
+  }
+}
+
 export type Role = "eval" | "lead" | "tech";
 export interface Account {
   id: string;
@@ -177,16 +197,17 @@ export async function seedIfEmpty() {
   if (done.value && !doReset) return { seeded: false, reset: false };
 
   const pw = initialPassword();
-  let n = 0;
+  const accBatch: [Deno.KvKey, unknown][] = [];
   for (const a of META.accounts) {
     const salt = newSalt();
     const hash = await hashPw(pw, salt);
     const prev = (await kv.get<Account>(["account", a.id])).value;
     // عند إعادة الضبط نحتفظ ببيانات الحساب ونغيّر كلمة المرور فقط
-    await kv.set(["account", a.id], { ...(prev ?? a), salt, hash, mustChange: true });
-    n++;
+    accBatch.push([["account", a.id], { ...(prev ?? a), salt, hash, mustChange: true }]);
   }
-  if (!done.value) { for (const i of META.inst) await kv.set(["inst", i.id], i); }
+  await setMany(accBatch);
+  const n = accBatch.length;
+  if (!done.value) await setMany(META.inst.map((i) => [["inst", i.id], i]));
   await kv.set(["seeded"], true);
   if (resetToken) await kv.set(["reset_token"], resetToken);
 
@@ -206,11 +227,10 @@ export const EVAL_SCHEMA = 3;
 export async function migrateEvalSchema() {
   const cur = (await kv.get<number>(["eval_schema"])).value ?? 1;
   if (cur >= EVAL_SCHEMA) return { migrated: false, deleted: 0 };
-  let n = 0;
-  for await (const e of kv.list({ prefix: ["eval"] })) {
-    await kv.delete(e.key);
-    n++;
-  }
+  const keys: Deno.KvKey[] = [];
+  for await (const e of kv.list({ prefix: ["eval"] })) keys.push(e.key);
+  await deleteMany(keys);
+  const n = keys.length;
   await kv.delete(["archive_seeded"]);
   await kv.set(["eval_schema"], EVAL_SCHEMA);
   if (n) console.warn(`[ترقية] حُذف ${n} تقييماً تجريبياً بعد تغيير بنية التقييم إلى المؤشرات التفصيلية.`);
@@ -225,7 +245,7 @@ export async function seedArchiveCycle() {
   const done = (await kv.get<boolean>(["archive_seeded"])).value;
   if (done) return { seeded: false, count: 0 };
   const y = META.archiveYear;
-  let n = 0;
+  const batch: [Deno.KvKey, unknown][] = [];
   for (const i of META.inst as unknown as Inst[]) {
     const p = i.prev;
     if (!p || (p.pct === null && !p.verdict)) continue;
@@ -245,9 +265,10 @@ export async function seedArchiveCycle() {
       by: "IMPORT",
       at: new Date().toISOString(),
     };
-    await kv.set(["eval", y, i.id], ev);
-    n++;
+    batch.push([["eval", y, i.id], ev]);
   }
+  await setMany(batch);
+  const n = batch.length;
   await kv.set(["archive_seeded"], true);
   console.warn(`[استيراد] سُجّلت ${n} نتيجة للعام المؤرشف ${y} من الملفات المركزية.`);
   return { seeded: true, count: n };
@@ -262,20 +283,19 @@ export async function seedArchiveCycle() {
 export async function syncInstitutions() {
   const cur = (await kv.get<number>(["inst_rev"])).value ?? 0;
   if (cur >= META.instRev) return { synced: false, count: 0 };
-  let n = 0;
+  // قراءة دفعة واحدة ثم كتابة المختلف فقط، بدل قراءة وكتابة لكل مؤسسة
+  const live: Record<string, Inst> = {};
+  for await (const e of kv.list<Inst>({ prefix: ["inst"] })) live[String(e.key[1])] = e.value;
+  const batch: [Deno.KvKey, unknown][] = [];
   for (const seedInst of META.inst as unknown as Inst[]) {
-    const live = (await kv.get<Inst>(["inst", seedInst.id])).value;
-    if (!live) {
-      await kv.set(["inst", seedInst.id], seedInst);
-      n++;
-      continue;
-    }
-    const next: Inst = { ...seedInst, evaluator: live.evaluator };
-    if (JSON.stringify(next) !== JSON.stringify(live)) {
-      await kv.set(["inst", seedInst.id], next);
-      n++;
+    const cur2 = live[seedInst.id];
+    const next: Inst = cur2 ? { ...seedInst, evaluator: cur2.evaluator } : seedInst;
+    if (!cur2 || JSON.stringify(next) !== JSON.stringify(cur2)) {
+      batch.push([["inst", seedInst.id], next]);
     }
   }
+  await setMany(batch);
+  const n = batch.length;
   await kv.set(["inst_rev"], META.instRev);
   if (n) console.warn(`[مزامنة] حُدّثت بيانات ${n} مؤسسة إلى المراجعة ${META.instRev}.`);
   return { synced: true, count: n };

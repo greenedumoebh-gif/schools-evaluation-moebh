@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """فحص الشاشات في المتصفح — قياسات كمية لا حكم بصري."""
-import os, sys
+import os, sys, time
 import openpyxl
 from playwright.sync_api import sync_playwright
 
@@ -44,6 +44,21 @@ def fill_central(page, team, students=800, teachers=40, subjects=10):
     page.wait_for_selector(".toast", timeout=15000)
     page.wait_for_timeout(800)
 
+
+# التهيئة تعمل في الخلفية بعد أول طلب؛ ننتظر اكتمالها قبل فتح المتصفح
+import json as _json
+import urllib.request as _url
+
+for _ in range(180):
+    try:
+        _h = _json.loads(_url.urlopen(BASE + "/health", timeout=5).read())
+    except Exception:
+        _h = {"setup": "running"}
+    if _h.get("setup") == "done":
+        break
+    if _h.get("setup") == "failed":
+        raise SystemExit("فشلت التهيئة: " + str(_h.get("error")))
+    time.sleep(1)
 
 with sync_playwright() as p:
     br = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])

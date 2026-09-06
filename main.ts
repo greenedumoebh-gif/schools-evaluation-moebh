@@ -2,15 +2,32 @@
 import { handleApi } from "./src/api.ts";
 import { kvError, META, seedIfEmpty } from "./src/db.ts";
 
-let bootError: string | null = kvError;
-if (!bootError) {
-  try {
-    const res = await seedIfEmpty();
-    if (res.seeded) console.log(`تهيئة أولى: ${res.accounts} حساباً · ${res.inst} مؤسسة`);
-  } catch (e) {
-    bootError = e instanceof Error ? e.message : String(e);
-    console.error("[خطأ] فشلت التهيئة:", bootError);
-  }
+const bootError: string | null = kvError;
+
+/**
+ * التهيئة لا تُنفَّذ عند الإقلاع.
+ * التهيئة الأولى تُنشئ آلاف المفاتيح وتحسب 37 اشتقاق كلمة مرور بـ120,000 دورة،
+ * وتنفيذها في أعلى الوحدة كان يتجاوز مهلة إقلاع Deno Deploy فيسقط بـ BOOT_FAILED.
+ * تعمل الآن في الخلفية بعد أول طلب، والطلبات أثناءها تتلقى صفحة «جارٍ التهيئة».
+ */
+let seedState: "idle" | "running" | "done" | "failed" = "idle";
+let seedError: string | null = null;
+function startSeeding() {
+  if (seedState !== "idle" || kvError) return;
+  seedState = "running";
+  (async () => {
+    const t0 = Date.now();
+    try {
+      const res = await seedIfEmpty();
+      if (res.seeded) console.log(`تهيئة أولى: ${res.accounts} حساباً · ${res.inst} مؤسسة`);
+      console.log(`اكتملت التهيئة في ${((Date.now() - t0) / 1000).toFixed(1)} ثانية.`);
+      seedState = "done";
+    } catch (e) {
+      seedError = e instanceof Error ? e.message : String(e);
+      seedState = "failed";
+      console.error("[خطأ] فشلت التهيئة:", seedError);
+    }
+  })();
 }
 
 function diagnosticPage(msg: string): Response {
@@ -88,12 +105,16 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const secure = url.protocol === "https:";
 
+  // التهيئة تبدأ مع أول طلب أياً كان، بما فيه فحص الصحة
+  startSeeding();
+
   if (url.pathname === "/health") {
     return new Response(
       JSON.stringify({
-        ok: !bootError,
+        ok: !bootError && seedState !== "failed",
         version: META.version,
-        error: bootError,
+        setup: seedState,
+        error: bootError ?? seedError,
         at: new Date().toISOString(),
       }),
       { status: bootError ? 503 : 200, headers: { "content-type": "application/json; charset=utf-8" } },
@@ -102,6 +123,32 @@ Deno.serve(async (req: Request) => {
 
   // قاعدة البيانات غير متاحة: اعرض تشخيصاً مفهوماً بدل خطأ غامض
   if (bootError) return diagnosticPage(bootError);
+  if (seedState === "failed") return diagnosticPage(seedError ?? "فشلت التهيئة");
+
+  // الطلبات أثناء التهيئة تُردّ بصفحة انتظار تتحدّث تلقائياً
+  if (seedState === "running" && url.pathname.startsWith("/api/")) {
+    return new Response(
+      JSON.stringify({ error: "جارٍ تهيئة المنصة لأول مرة، أعد المحاولة بعد قليل", setup: "running" }),
+      { status: 503, headers: { "content-type": "application/json; charset=utf-8", "retry-after": "5" } },
+    );
+  }
+  if (seedState === "running") {
+    const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="5"><title>جارٍ التهيئة</title>
+<style>body{font-family:'Segoe UI',Tahoma,sans-serif;background:#f4f7f4;color:#20302a;
+line-height:1.9;margin:0;padding:24px}.b{max-width:620px;margin:56px auto;background:#fff;
+border:1px solid #e3e8e4;border-radius:14px;padding:26px 28px}
+h1{color:#0F5132;font-size:19px;margin:0 0 10px}p{margin:0 0 8px;color:#5f6b64;font-size:14px}
+</style></head><body><div class="b"><h1>جارٍ تهيئة المنصة لأول مرة</h1>
+<p>تُنشأ الحسابات وبيانات المؤسسات ونتائج العام المؤرشف. تستغرق العملية دقيقة تقريباً
+وتحدث مرة واحدة فقط.</p>
+<p>تتحدّث هذه الصفحة تلقائياً كل خمس ثوانٍ.</p></div></body></html>`;
+    return new Response(html, {
+      status: 503,
+      headers: { "content-type": "text/html; charset=utf-8", "retry-after": "5" },
+    });
+  }
 
   const api = await handleApi(req, url, secure);
   if (api) {
