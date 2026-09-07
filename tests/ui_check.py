@@ -340,6 +340,8 @@ with sync_playwright() as p:
     pg.wait_for_timeout(200)
     chk(pg.locator(".ebax").count() == 4, "بطاقات المحاور الأربع في الشريط")
     chk(pg.locator("#ebSave").inner_text() == "الحفظ تلقائي", "بيان الحفظ التلقائي ظاهر")
+
+
     pg.evaluate(
         """()=>{const el=document.querySelector('#content [data-k="1"][data-f="j"]');
         el.value=8;el.dispatchEvent(new Event('input'))}"""
@@ -408,7 +410,8 @@ with sync_playwright() as p:
     chk(over == 0, f"لا نص مقطوع أفقياً في صفوف المؤشرات ({over})")
 
     # ── الإدخال والحساب الحي ──
-    inputs = pg.locator("#content input[type=number]")
+    # خانات المؤشرات وحدها؛ خانات بيانات المؤسسة ليست منها
+    inputs = pg.locator("#content input[type=number][data-k]")
     n_in = inputs.count()
     pg.evaluate(
         "()=>{document.querySelectorAll('#content [data-k]').forEach(el=>{"
@@ -479,6 +482,26 @@ with sync_playwright() as p:
         "()=>[...document.querySelectorAll('#content input[data-k]')].filter(e=>e.value!=='').length"
     )
     chk(kept == n_in, f"المدخلات محفوظة بعد إعادة الفتح ({kept} من {n_in})")
+    # بيانات المؤسسة داخل شاشة التقييم
+    chk(pg.locator("#cdBar input").count() == 3, "ثلاث خانات لبيانات المؤسسة أعلى الشاشة")
+    before_cv = pg.evaluate(
+        "()=>[...document.querySelectorAll('[id^=cv]:not([id^=cvl])')].map(e=>e.textContent.trim())"
+    )
+    chk(len(before_cv) == 4, f"أربعة مقامات مركزية معروضة في المؤشرات ({len(before_cv)})")
+    pg.fill("#cd_students", "820")
+    pg.wait_for_timeout(300)
+    chk("الكبيرة" in pg.locator("#cdSize").inner_text(), "التصنيف يُشتق حياً من عدد الطلبة")
+    pg.fill("#cd_teachers", "44")
+    pg.fill("#cd_subjects", "9")
+    pg.wait_for_timeout(2600)
+    chk("محفوظ" in pg.locator("#cdState").inner_text(), "حفظ تلقائي مستقل لبيانات المؤسسة")
+    after_cv = pg.evaluate(
+        "()=>[...document.querySelectorAll('[id^=cv]:not([id^=cvl])')].map(e=>e.textContent.trim())"
+    )
+    chk(
+        "820" in after_cv and "44" in after_cv and after_cv != before_cv,
+        f"المقامات تحدّثت في المؤشرات دون إعادة بناء الشاشة ({after_cv})",
+    )
 
     # ── مدرسة «ابتدائي - إعدادي»: قاعدة المرحلة العليا ──
     pg3 = br.new_page(viewport={"width": 1440, "height": 950})

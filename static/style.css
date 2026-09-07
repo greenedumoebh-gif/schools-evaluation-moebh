@@ -2106,3 +2106,61 @@ html[data-theme="dark"] .rcover-tbl td:first-child {
   padding: 1px 7px;
   margin-inline-start: auto;
 }
+
+/* ── بيانات المؤسسة داخل شاشة التقييم ── */
+.cdbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--green-l);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 11px 14px;
+  margin-bottom: 13px;
+}
+.cd-t {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--green-d);
+  flex: 1 1 190px;
+  line-height: 1.5;
+}
+.cd-t span {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.cd-f {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cd-f > span {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-weight: 700;
+}
+.cd-f input {
+  width: 104px;
+}
+.cd-f b {
+  font-size: 12.5px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 128px;
+  text-align: center;
+}
+@media (max-width: 620px) {
+  .cd-f {
+    flex: 1 1 45%;
+  }
+  .cd-f input,
+  .cd-f b {
+    width: 100%;
+    min-width: 0;
+  }
+}

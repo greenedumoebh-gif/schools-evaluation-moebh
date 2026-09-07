@@ -496,6 +496,25 @@ async function openEval(id) {
      <div style="font-size:16px;font-weight:800;margin-top:3px">${esc(x.name)}</div></div>
      <button class="btn" style="background:rgba(255,255,255,.2)" id="evBack">رجوع</button></div>
    <div class="evbody">
+     <div class="cdbar" id="cdBar">
+       <div class="cd-t">بيانات المؤسسة لهذا العام
+         <span>تُدخل مرة واحدة، وتُسحب مقاماً في ${
+    K.kpis.filter((k) => k.centralField).length
+  } مؤشراً</span></div>
+       ${
+    META.centralFields.map(([f, lbl]) =>
+      `<label class="cd-f"><span>${esc(lbl)}</span>
+        <input type="number" min="0" step="1" id="cd_${f}" value="${K.central?.[f] ?? ""}" ${
+        EDITABLE && PERMS.includes("central") ? "" : "disabled"
+      }></label>`
+    ).join("")
+  }
+       <div class="cd-f"><span>التصنيف المشتق</span><b id="cdSize">${esc(x.size ?? "—")}</b></div>
+       <span class="eb-save" id="cdState">${
+    EDITABLE && PERMS.includes("central") ? "الحفظ تلقائي" : "عرض فقط"
+  }</span>
+     </div>
+
      <div class="axfilter" id="axFilter">
        <button class="ytab on" data-ax="0" style="--yc:var(--muted)">كل المحاور</button>
        ${
@@ -557,8 +576,8 @@ async function openEval(id) {
       } else {
         if (k.denom && k.centralField) {
           h += `<div class="fld"><label>${esc(k.denom)} — مركزي</label>
-            <div class="tgt">${k.centralValue ?? "—"}</div>
-            <div class="ogl">${
+            <div class="tgt" id="cv${k.n}">${k.centralValue ?? "—"}</div>
+            <div class="ogl" id="cvl${k.n}">${
             k.centralValue === null ? '<b style="color:var(--red)">غير مُدخل</b>' : "من بيانات المؤسسة"
           }</div></div>`;
         } else if (k.denom) {
@@ -630,7 +649,7 @@ async function openEval(id) {
     box.className = "tip red";
     box.style.margin = "0 0 14px";
     box.innerHTML = `بيانات المؤسسة المركزية ناقصة، فتعذّر حساب ${missCentral.length} مؤشراً تعتمد عليها ` +
-      `(${missCentral.map((k) => k.n).join(" · ")}). يدخلها الحساب الفني مرة واحدة للمؤسسة.`;
+      `(${missCentral.map((k) => k.n).join(" · ")}). أدخلها في الشريط أعلى الشاشة.`;
     $("#content").querySelector(".evbody").prepend(box);
   }
   if (!EDITABLE) {
@@ -693,6 +712,7 @@ async function openEval(id) {
       `<div class="card" style="text-align:center;color:var(--muted)">جارٍ التحميل…</div>`;
     evHistory(id);
   };
+  wireCentralBar(id);
   wireAxFilter();
   document.querySelectorAll("[data-ebax]").forEach((b) =>
     b.onclick = () => {
@@ -717,6 +737,64 @@ function evBarFit() {
   const top = tb ? Math.round(tb.getBoundingClientRect().height) : 0;
   bar.style.top = top + "px";
   sp.style.height = bar.offsetHeight + "px";
+}
+
+/**
+ * بيانات المؤسسة داخل شاشة التقييم: تُحفظ وحدها بحفظ تلقائي مستقل عن التقييم،
+ * ثم تُحدَّث المقامات المركزية في المؤشرات وتُعاد الحسبة دون إعادة بناء الشاشة
+ * حتى لا يضيع ما يكتبه المقيّم.
+ */
+function wireCentralBar(instId) {
+  const st = (t, c) => {
+    const el = $("#cdState");
+    if (el) {
+      el.textContent = t;
+      el.className = "eb-save " + (c ?? "");
+    }
+  };
+  const rule = META.sizeRule[EV.inst.team === "رياض الأطفال" ? "kg" : "school"];
+  let timer = null;
+  META.centralFields.forEach(([f]) => {
+    const el = $("#cd_" + f);
+    if (!el || el.disabled) return;
+    el.oninput = () => {
+      if (f === "students") {
+        const v = Number(el.value);
+        const hit = el.value === "" ? null : rule.find(([, a, b]) => v >= a && (b === null || v <= b));
+        $("#cdSize").textContent = hit ? hit[0] : "—";
+      }
+      st("تغييرات غير محفوظة", "warn");
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        st("جارٍ الحفظ…", "");
+        const row = { id: instId };
+        META.centralFields.forEach(([g]) => row[g] = $("#cd_" + g).value);
+        try {
+          await api("/api/central", { method: "POST", body: { year: VYEAR, rows: [row] } });
+          const fresh = await api("/api/kpis?inst=" + encodeURIComponent(instId));
+          const byN = {};
+          fresh.kpis.forEach((k) => byN[k.n] = k);
+          EV.defs.kpis.forEach((k) => {
+            if (!k.centralField) return;
+            k.centralValue = byN[k.n]?.centralValue ?? null;
+            const cell = $("#cv" + k.n), lbl = $("#cvl" + k.n);
+            if (cell) cell.textContent = k.centralValue === null ? "—" : fmt(k.centralValue);
+            if (lbl) {
+              lbl.innerHTML = k.centralValue === null
+                ? '<b style="color:var(--red)">غير مُدخل</b>'
+                : "من بيانات المؤسسة";
+            }
+          });
+          EV.defs.central = fresh.central;
+          st("محفوظ", "ok");
+          evCalc();
+        } catch (e) {
+          st("تعذّر الحفظ", "err");
+          toast(e.message, true);
+        }
+      }, 1200);
+    };
+  });
 }
 
 /** فلتر المحاور: يخفي صناديق المحاور غير المختارة أو المؤشرات المكتملة. */
