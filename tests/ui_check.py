@@ -355,12 +355,24 @@ with sync_playwright() as p:
     )
     pg.wait_for_timeout(300)
     chk(pg.locator("#ebPts").inner_text() != "—", f"النقاط تتحدث لحظياً ({pg.locator('#ebPts').inner_text()})")
-    chk(pg.locator("#ebFill").inner_text().startswith("1 /"), "عدّاد المؤشرات في الشريط")
+    chk(pg.locator("#evBar .dn").count() == 6, f"حلقات النسب في الشريط ({pg.locator('#evBar .dn').count()})")
+    chk(
+        pg.locator("#ebFillD .dn-v").inner_text().startswith("1/"),
+        f"حلقة الاكتمال تتحدث ({pg.locator('#ebFillD .dn-v').inner_text()})",
+    )
+    arc = pg.evaluate(
+        """()=>{const c=document.querySelector('#ebFillD .dn-fg');
+        return 1-parseFloat(c.style.strokeDashoffset)/parseFloat(c.getAttribute('stroke-dasharray'))}"""
+    )
+    chk(0 < arc < 0.2, f"طول القوس متناسب مع نسبة الاكتمال ({round(arc * 100)}%)")
     chk(
         pg.locator("#ebAxC1").inner_text().startswith("1/"),
         f"حالة المحور الأول تتحدث لحظياً ({pg.locator('#ebAxC1').inner_text()})",
     )
-    chk(pg.locator("#ebAx1").inner_text() != "—", "نسبة المحور الأول ظاهرة في الشريط")
+    chk(
+        pg.locator("#ebAxD1 .dn-v").inner_text().endswith("%*"),
+        f"حلقة المحور الأول بنسبة جزئية موسومة ({pg.locator('#ebAxD1 .dn-v').inner_text()})",
+    )
     pg.locator('[data-ebax="3"]').click()
     pg.wait_for_timeout(400)
     chk(

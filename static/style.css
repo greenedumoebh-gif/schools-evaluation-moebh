@@ -2164,3 +2164,67 @@ html[data-theme="dark"] .rcover-tbl td:first-child {
     min-width: 0;
   }
 }
+
+/* ── حلقات النسب في شريط التقييم ── */
+.dn {
+  position: relative;
+  width: var(--dsz);
+  height: var(--dsz);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.dn svg {
+  transform: rotate(-90deg);
+  display: block;
+}
+.dn circle {
+  fill: none;
+  stroke-linecap: round;
+}
+.dn .dn-bg {
+  stroke: var(--line);
+}
+.dn .dn-fg {
+  transition: stroke-dashoffset 0.35s ease, stroke 0.2s ease;
+}
+.dn .dn-v {
+  position: absolute;
+  font-size: calc(var(--dsz) * 0.27);
+  font-weight: 800;
+  font-variant-numeric: lining-nums;
+  line-height: 1;
+  margin-top: -2px;
+}
+.dn .dn-l {
+  position: absolute;
+  bottom: calc(var(--dsz) * 0.13);
+  font-style: normal;
+  font-size: calc(var(--dsz) * 0.15);
+  color: var(--muted);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.eb-stats {
+  align-items: center;
+  gap: 12px;
+}
+.ebax {
+  padding: 4px 7px 5px;
+  gap: 2px;
+}
+.ebax .dn .dn-l {
+  display: none;
+}
+.ebax-c {
+  font-size: 9.5px;
+}
+@media (max-width: 620px) {
+  .dn {
+    --dsz: 44px !important;
+  }
+  .ebax .dn {
+    --dsz: 34px !important;
+  }
+}

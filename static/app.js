@@ -291,6 +291,33 @@ async function render() {
 const done = (l) => l.filter((x) => x.status === "مكتمل");
 const avgOf = (l) => l.length ? l.reduce((s, x) => s + x.pct, 0) / l.length : 0;
 
+/**
+ * حلقة نسبة مرسومة بـSVG: أخف من مكتبة رسوم لعنصر بهذا الحجم، وتتبع ألوان السمة.
+ * القيمة تُضبط لاحقاً بـsetDonut دون إعادة بناء العنصر.
+ */
+function donut(id, size, w, label, color) {
+  const r = (size - w) / 2, c = 2 * Math.PI * r;
+  return `<span class="dn" id="${id}" style="--dsz:${size}px">
+    <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">
+      <circle class="dn-bg" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${w}"></circle>
+      <circle class="dn-fg" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${w}"
+        stroke-dasharray="${c}" stroke-dashoffset="${c}"
+        style="stroke:${color ?? "var(--green)"}"></circle>
+    </svg>
+    <b class="dn-v">—</b><i class="dn-l">${esc(label)}</i></span>`;
+}
+/** pct من 0 إلى 100 أو null؛ txt نص بديل يُعرض في المنتصف. */
+function setDonut(id, pct, txt, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const fg = el.querySelector(".dn-fg"), v = el.querySelector(".dn-v");
+  const c = Number(fg.getAttribute("stroke-dasharray"));
+  const p = pct === null || pct === undefined ? 0 : Math.max(0, Math.min(100, pct));
+  fg.style.strokeDashoffset = c * (1 - p / 100);
+  if (color) fg.style.stroke = color;
+  v.textContent = txt;
+}
+
 /* ── الرسوم البيانية ── */
 const CHARTS = [];
 const CH_FONT = { family: "'Segoe UI', Tahoma, sans-serif", size: 12 };
@@ -468,17 +495,16 @@ async function openEval(id) {
    <div class="evbar" id="evBar">
      <div class="eb-name">${esc(x.name)}</div>
      <div class="eb-stats">
+       ${donut("ebPctD", 54, 6.5, "النتيجة")}
+       ${donut("ebFillD", 46, 5.5, "الاكتمال")}
        <span class="eb-s"><b id="ebPts">—</b><i>نقطة من ${fmt(K.cap)}</i></span>
-       <span class="eb-s"><b id="ebPct">—</b><i>النتيجة</i></span>
        <span class="eb-s"><b id="ebLvl">—</b><i>التقدير</i></span>
-       <span class="eb-s"><b id="ebFill">0 / ${K.kpis.length}</b><i>المؤشرات</i></span>
      </div>
      <div class="eb-ax" id="ebAx">${
     [1, 2, 3, 4].map((a) =>
-      `<button class="ebax" data-ebax="${a}" style="--yc:${AXC[a]}"
+      `<button class="ebax" data-ebax="${a}" style="--yc:${AXD[a]}"
         title="${esc(META.axname[a])}">
-        <span class="ebax-n">${["الأول", "الثاني", "الثالث", "الرابع"][a - 1]}</span>
-        <span class="ebax-v" id="ebAx${a}">—</span>
+        ${donut("ebAxD" + a, 38, 4.5, ["الأول", "الثاني", "الثالث", "الرابع"][a - 1], AXD[a])}
         <span class="ebax-c" id="ebAxC${a}">0/${K.kpis.filter((k) => k.ax === a).length}</span>
       </button>`
     ).join("")
@@ -973,8 +999,21 @@ function evCalc() {
     if (el) el.textContent = v;
   };
   setb("#ebPts", pts.toFixed(1));
-  setb("#ebPct", pct === null ? "—" : pct.toFixed(1) + "%");
-  setb("#ebFill", `${filled} / ${K.kpis.length}`);
+  const lvNow = (p) => {
+    let L = META.rubric[0];
+    META.rubric.forEach((b) => {
+      if (p >= b.a) L = b;
+    });
+    return L;
+  };
+  setDonut(
+    "ebPctD",
+    pct,
+    pct === null ? "—" : pct.toFixed(0) + "%",
+    pct === null ? "var(--line)" : lvlColor(lvNow(pct).n),
+  );
+  const fpc = K.kpis.length ? filled / K.kpis.length * 100 : 0;
+  setDonut("ebFillD", fpc, `${filled}/${K.kpis.length}`, fpc >= 100 ? "var(--green)" : "var(--amber)");
   const lvEl = $("#ebLvl");
   if (lvEl) {
     let L2 = META.rubric[0];
@@ -991,20 +1030,16 @@ function evCalc() {
   // حالة كل محور لحظياً: النسبة وعدد المملوء من مؤشراته
   [1, 2, 3, 4].forEach((a) => {
     const tot = K.kpis.filter((k) => k.ax === a).length;
-    const v = $("#ebAx" + a), c = $("#ebAxC" + a);
+    const c = $("#ebAxC" + a);
     const pc = axn[a] === tot ? Math.round(axp[a] / K.axw[a] * 1000) / 10 : null;
-    if (v) {
-      v.textContent = pc === null
-        ? (axn[a] ? Math.round(axp[a] / K.axw[a] * 1000) / 10 + "%*" : "—")
-        : pc + "%";
-      v.style.color = pc === null ? "" : lvlColor((() => {
-        let L = META.rubric[0];
-        META.rubric.forEach((b) => {
-          if (pc >= b.a) L = b;
-        });
-        return L.n;
-      })());
-    }
+    // النسبة الجزئية تُعرض بنجمة لأن المحور لم تكتمل مؤشراته بعد
+    const part = axn[a] ? Math.round(axp[a] / K.axw[a] * 1000) / 10 : null;
+    setDonut(
+      "ebAxD" + a,
+      part,
+      part === null ? "—" : Math.round(part) + (pc === null ? "%*" : "%"),
+      part === null ? "var(--line)" : (pc === null ? AXD[a] : lvlColor(lvNow(part).n)),
+    );
     if (c) {
       c.textContent = `${axn[a]}/${tot}`;
       c.classList.toggle("done", axn[a] === tot);
