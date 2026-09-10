@@ -535,8 +535,8 @@ with sync_playwright() as p:
     login(pg4, "KG-1")
     pg4.locator("[data-open]").first.click()
     pg4.wait_for_selector(".axbox", timeout=15000)
-    chk(pg4.locator(".frow").count() == 25, f"روضة: 25 صف مؤشر ({pg4.locator('.frow').count()})")
-    chk(pg4.locator("select[data-f=j]").count() == 2, f"روضة: مؤشران وصفيان ({pg4.locator('select[data-f=j]').count()})")
+    chk(pg4.locator(".frow").count() == 22, f"روضة: 22 صف مؤشر ({pg4.locator('.frow').count()})")
+    chk(pg4.locator("select[data-f=j]").count() == 3, f"روضة: ثلاثة مؤشرات وصفية ({pg4.locator('select[data-f=j]').count()})")
     chk(pg4.locator("input[data-f=m]").count() == 0, "روضة: لا قيم ثانوية")
     chk("مُفترض" not in pg4.locator("#content").inner_text(), "روضة: لا مستهدف مُفترض")
     chk("4,500" in pg4.locator("#evSum").inner_text(), "روضة: السقف 4,500 في جدول النتيجة")
@@ -933,8 +933,8 @@ with sync_playwright() as p:
     chk(pg2.locator("#tgBox #ke3 textarea").count() >= 5, f"حقول تعديل النص ({pg2.locator('#tgBox #ke3 textarea').count()})")
     pg2.click("#tgKg")
     pg2.wait_for_timeout(2500)
-    chk(pg2.locator("#tgBox .frow").count() == 25, f"محرّر مؤشرات المبكر 25 مؤشراً ({pg2.locator('#tgBox .frow').count()})")
-    chk(pg2.locator("#tgBox [data-prop]").count() == 6, f"ستة أزرار مقترح للمبكر ({pg2.locator('#tgBox [data-prop]').count()})")
+    chk(pg2.locator("#tgBox .frow").count() == 22, f"محرّر مؤشرات المبكر 22 مؤشراً ({pg2.locator('#tgBox .frow').count()})")
+    chk(pg2.locator("#tgBox [data-prop]").count() == 3, f"ثلاثة أزرار مقترح للمبكر ({pg2.locator('#tgBox [data-prop]').count()})")
 
     # ── معاينة حساب آخر ──
     chk(pg2.locator("[data-viewas]").count() == 37, "زر معاينة لكل حساب")

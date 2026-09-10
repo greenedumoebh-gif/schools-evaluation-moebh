@@ -2228,3 +2228,28 @@ html[data-theme="dark"] .rcover-tbl td:first-child {
     --dsz: 34px !important;
   }
 }
+
+/* ── المؤشر المعلّق: بلا مستهدف معتمد في الخطة ── */
+.frow.pend {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--soft2),
+    var(--soft2) 9px,
+    var(--soft) 9px,
+    var(--soft) 18px
+  );
+  opacity: 0.92;
+}
+.frow.pend .finputs {
+  opacity: 0.5;
+}
+.pendnote {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--amber);
+  background: var(--amber-l);
+  border-radius: 7px;
+  padding: 4px 9px;
+  display: inline-block;
+}

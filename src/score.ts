@@ -38,6 +38,26 @@ export function stageOf(team: string): Stage {
 export function kpisOf(team: string): Kpi[] {
   return META.kpi[stageOf(team)];
 }
+/**
+ * المؤشر المعلّق: لم يُحدَّد مستهدفه في الخطة (خانة فارغة في المصدر).
+ * لا يدخل الحساب ولا يُعدّ في الاكتمال، ووزنه يُعاد توزيعه على مؤشرات محوره
+ * الفعّالة. بمجرد اعتماد رقمه من محرّر المؤشرات يصير فعّالاً وتُعاد القسمة.
+ */
+export function isPending(k: Kpi, ov?: Targets | null, team?: string): boolean {
+  if (k.mode === "وصفي") return false;
+  // المؤشر ذو قاعدة المرحلة العليا يأخذ مستهدفه من القاعدة لا من الحقل
+  if (k.n === META.stageKpi.school && (!team || stageOf(team) === "school")) return false;
+  const o = ov?.[String(k.n)]?.t;
+  const t = o === undefined || o === null ? k.tgt : o;
+  return t === null || t === undefined;
+}
+/** وزن المؤشر يُحسب لحظياً: وزن المحور ÷ عدد مؤشراته الفعّالة. */
+export function weightOf(k: Kpi, team: string, ov?: Targets | null): number {
+  if (isPending(k, ov, team)) return 0;
+  const st = stageOf(team);
+  const n = kpisOf(team).filter((x) => x.ax === k.ax && !isPending(x, ov, team)).length;
+  return n ? axwOfStage(st)[String(k.ax)] / n : 0;
+}
 export function capOfStage(st: Stage): number {
   return META.cap[st];
 }
@@ -122,7 +142,10 @@ export function applyText(k: Kpi, ov: Targets): Kpi {
 export function effTarget(k: Kpi, team: string, ref: StageRef, ov: Targets): number {
   if (k.mode === "وصفي") return 100;
   const o = ov[String(k.n)]?.t;
-  return o === undefined || o === null ? baseTarget(k, team, ref) : Number(o);
+  if (o !== undefined && o !== null) return Number(o);
+  const b = baseTarget(k, team, ref);
+  // المؤشر المعلّق بلا مستهدف؛ نعيد 0 ولا يُستخدم لأنه مستبعد من الحساب
+  return b === null || b === undefined ? 0 : b;
 }
 export function effSecTarget(k: Kpi, ov: Targets): number | null {
   if (k.sec === null || k.sec === undefined) return null;
@@ -193,8 +216,13 @@ export function scoreInst(
   const axw = axwOfStage(st);
   const axPts: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0 };
   const kpiPct: Record<string, number | null> = {};
-  let pts = 0, filled = 0;
+  let pts = 0, filled = 0, active = 0;
   for (const k of ks) {
+    if (isPending(k, ov, team)) {
+      kpiPct[String(k.n)] = null;
+      continue;
+    }
+    active++;
     const P = rowPct(
       k,
       kpiRaw[String(k.n)],
@@ -205,11 +233,11 @@ export function scoreInst(
     kpiPct[String(k.n)] = P;
     if (P === null) continue;
     filled++;
-    const p = k.w * P / 100;
+    const p = weightOf(k, team, ov) * P / 100;
     pts += p;
     axPts[String(k.ax)] += p;
   }
-  const complete = filled === ks.length;
+  const complete = active > 0 && filled === active;
   const axes: Record<string, number | null> = {};
   for (const a of ["1", "2", "3", "4"]) {
     axes[a] = complete ? Math.round(axPts[a] / axw[a] * 1000) / 10 : null;
@@ -221,6 +249,6 @@ export function scoreInst(
     pts: Math.round(pts * 10) / 10,
     pct: complete ? Math.round(pts / capOfStage(st) * 1000) / 10 : null,
     filled,
-    total: ks.length,
+    total: active,
   };
 }

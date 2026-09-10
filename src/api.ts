@@ -47,6 +47,7 @@ import {
   effSecTarget,
   effTarget,
   getTargets,
+  isPending,
   type Kpi,
   kpisOf,
   scoreInst,
@@ -56,6 +57,7 @@ import {
   type Targets,
   TEXT_FIELDS,
   topStage,
+  weightOf,
 } from "./score.ts";
 import {
   blockWhileViewing,
@@ -490,6 +492,8 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       tgtBase: k.mode === "وصفي" ? 100 : effTarget(k, i.team, i, {}),
       secEff: effSecTarget(k, ov),
       assumed: targetIsAssumed(k, i.team, i),
+      pending: isPending(k, ov, i.team),
+      wEff: weightOf(k, i.team, ov),
       centralField: k.denom ? META.denomMap[k.denom] ?? null : null,
       centralValue: k.denom && META.denomMap[k.denom]
         ? ((c ?? {}) as unknown as Record<string, number | null>)[META.denomMap[k.denom]] ?? null
@@ -513,6 +517,7 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
       cap: capOf(i.team),
       axw: axw(i.team),
       states: META.states,
+      pendingNote: META.pendingNote,
       topStage: topStage(i),
       central: c ?? { students: null, teachers: null, subjects: null },
       // القيم المحفوظة تُرسَل مع التعريف حتى لا تُبنى الشاشة من نسخة قديمة في المتصفح
@@ -988,7 +993,8 @@ export async function handleApi(req: Request, url: URL, secure: boolean): Promis
             ax: k.ax,
             kpi: applyText(k, ov).kpi,
             mode: k.mode,
-            w: k.w,
+            w: weightOf(k, i.team, ov),
+            pending: isPending(k, ov, i.team),
             tgt: effTarget(k, i.team, i, ov),
             i: raw?.i ?? null,
             j: raw?.j ?? null,

@@ -224,6 +224,62 @@ chk(
   `رقم الإصدار مطبوع في شاشة الدخول قبل أي طلب لاحق (${ver})`,
 );
 
+console.log("\n■ المؤشرات المعلّقة في خطة رياض الأطفال");
+const kgDefs = await (await call(tech.sid, "/api/kpis?inst=KG-001")).json();
+const pend = kgDefs.kpis.filter((k: { pending: boolean }) => k.pending).map((k: { n: number }) => k.n);
+chk(
+  JSON.stringify(pend) === JSON.stringify([15]),
+  `المعلّق: ${pend.join(" · ") || "لا شيء"} — المؤشر المدمج بلا رقم`,
+);
+chk(kgDefs.kpis.length === 22, `المؤشرات بعد الحذف والدمج 22 (${kgDefs.kpis.length})`);
+const act = kgDefs.kpis.filter((k: { pending: boolean }) => !k.pending);
+chk(act.length === 21, `الفعّال منها 21 (${act.length})`);
+chk(
+  !kgDefs.kpis.some((k: { kpi: string }) => k.kpi.includes("توظيف المحتويات التعليمية الرقمية")),
+  "حُذف مؤشر توظيف المحتويات الرقمية (المحور الأول)",
+);
+chk(
+  !kgDefs.kpis.some((k: { kpi: string }) => k.kpi.includes("الإذاعة")),
+  "حُذف مؤشر الإذاعة الصباحية (المحور الثالث)",
+);
+chk(
+  kgDefs.kpis.filter((k: { kpi: string }) => k.kpi.includes("إعادة استخدام الخامات")).length === 1,
+  "مؤشرا إعادة الاستخدام دُمجا في واحد",
+);
+const byAx: Record<number, number> = {};
+act.forEach((k: { ax: number }) => byAx[k.ax] = (byAx[k.ax] ?? 0) + 1);
+chk(
+  byAx[1] === 7 && byAx[2] === 6 && byAx[3] === 5 && byAx[4] === 3,
+  `التوزيع على المحاور ${JSON.stringify(byAx)}`,
+);
+const wsum: Record<number, number> = {};
+act.forEach((k: { ax: number; wEff: number }) => wsum[k.ax] = (wsum[k.ax] ?? 0) + k.wEff);
+chk(
+  [1, 2, 3, 4].every((a) => Math.abs(wsum[a] - kgDefs.axw[a]) < 0.01),
+  `مجموع أوزان كل محور يساوي وزنه: ${[1, 2, 3, 4].map((a) => Math.round(wsum[a])).join(" · ")}`,
+);
+chk(
+  Math.abs([1, 2, 3, 4].reduce((s, a) => s + wsum[a], 0) - 4500) < 0.05,
+  "مجموع الأوزان يساوي السقف 4,500",
+);
+const kNaz = kgDefs.kpis.find((k: { kpi: string }) => k.kpi.includes("متابعة إجراءات النظافة"));
+chk(kNaz.mode === "وصفي" && kNaz.n === 12, `خطة النظافة صارت وصفية برقم ${kNaz.n}`);
+const kMerge = kgDefs.kpis.find((k: { kpi: string }) => k.kpi.includes("إعادة استخدام الخامات"));
+chk(kMerge.pending && kMerge.n === 15, "المؤشر المدمج معلّق لغياب الرقم");
+const kNab = kgDefs.kpis.find((k: { kpi: string }) => k.kpi.includes("رعاية النباتات"));
+chk(!kNab.kpi.includes("العطلات"), "خطة رعاية النباتات بالصياغة المختصرة");
+// اعتماد مستهدف للمعلّق يفعّله ويعيد توزيع الأوزان
+await call(tech.sid, "/api/targets", "POST", { stage: "kg", targets: { "15": { t: 3 } } });
+const after15 = await (await call(tech.sid, "/api/kpis?inst=KG-001")).json();
+const a15 = after15.kpis.find((k: { n: number }) => k.n === 15);
+const ax3 = after15.kpis.filter((k: { ax: number; pending: boolean }) => k.ax === 3 && !k.pending);
+chk(!a15.pending && ax3.length === 6, `اعتماد المستهدف يفعّل المؤشر (محور 3 صار ${ax3.length})`);
+chk(
+  Math.abs(ax3[0].wEff - 1100 / 6) < 0.01,
+  `وزن مؤشرات المحور الثالث أُعيد توزيعه (${Math.round(ax3[0].wEff * 100) / 100})`,
+);
+await call(tech.sid, "/api/targets", "POST", { stage: "kg", targets: { "15": { t: null } } });
+
 console.log("\n■ قطاع المؤسسة");
 const bySector: Record<string, number> = {};
 for (const r of all) bySector[r.sector] = (bySector[r.sector] ?? 0) + 1;
@@ -254,8 +310,8 @@ chk(
 const kgOne = await (await call(tech.sid, "/api/kpis?inst=KG-001")).json();
 const prOne = await (await call(tech.sid, "/api/kpis?inst=PR-001")).json();
 chk(
-  kgOne.kpis.length === 25 && kgOne.cap === 4500,
-  `رياض الأطفال على 25 مؤشراً وسقف 4,500 (${kgOne.kpis.length})`,
+  kgOne.kpis.length === 22 && kgOne.cap === 4500,
+  `رياض الأطفال على 22 مؤشراً وسقف 4,500 (${kgOne.kpis.length})`,
 );
 chk(
   prOne.kpis.length === 31 && prOne.cap === 5400,
@@ -318,7 +374,7 @@ chk(
   meta0.appName === "منصة تقييم المؤسسات التعليمية ضمن مبادرة التعليم الأخضر بمملكة البحرين",
   `اسم المنصة: ${meta0.appName}`,
 );
-chk(meta0.version === "1.20.0", `رقم الإصدار ${meta0.version}`);
+chk(meta0.version === "2.0.0", `رقم الإصدار ${meta0.version}`);
 const health = await (await fetch(`${BASE}/health`)).json();
 chk(health.version === meta0.version, `/health يعلن الإصدار نفسه (${health.version})`);
 chk(health.setup === "done", `حالة التهيئة ${health.setup}`);
@@ -1414,8 +1470,8 @@ chk(moved.ok && moved.evalCleared === true, "النقل بين النظامي و
 const movedRow = (await (await call(tech.sid, "/api/institutions")).json()).rows
   .find((r: { id: string }) => r.id === "Z1-002");
 chk(
-  movedRow.team === "رياض الأطفال" && movedRow.totalKpi === 25,
-  `المؤسسة المنقولة صارت على 25 مؤشراً (${movedRow.totalKpi})`,
+  movedRow.team === "رياض الأطفال" && movedRow.totalKpi === 21,
+  `المؤسسة المنقولة صارت على مؤشرات رياض الأطفال الفعّالة 21 (${movedRow.totalKpi})`,
 );
 await call(tech.sid, "/api/assign", "POST", { instId: "Z1-002", team: "منطقة 1", evaluator: "Z1-2" });
 

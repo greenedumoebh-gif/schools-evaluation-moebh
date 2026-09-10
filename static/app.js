@@ -546,7 +546,7 @@ async function openEval(id) {
        ${
     [1, 2, 3, 4].map((a) =>
       `<button class="ytab" data-ax="${a}" style="--yc:${AXC[a]}">${esc(META.axname[a])}
-        <span class="ybadge">${K.kpis.filter((k) => k.ax === a).length}</span></button>`
+        <span class="ybadge">${K.kpis.filter((k) => k.ax === a && !k.pending).length}</span></button>`
     ).join("")
   }
        <button class="ytab" data-ax="-1" style="--yc:var(--amber)">غير المكتملة
@@ -582,10 +582,12 @@ async function openEval(id) {
     h += `<div class="axbox"><div class="axhead" style="background:${AXD[a]}">
       <span>${esc(META.axname[a])}</span><span class="axbadge" id="axb${a}">—</span></div>`;
     rows.forEach((k) => {
-      h += `<div class="frow"><div class="ftop"><div class="fnum">${k.n}</div>
+      h += `<div class="frow${k.pending ? " pend" : ""}"><div class="ftop">
+        <div class="fnum">${k.n}</div>
         <div class="ftxt">${esc(k.kpi)}
         <div style="font-weight:400;font-size:11px;color:var(--muted);margin-top:3px">
-          <span class="pill ${MODEP[k.mode]}">${k.mode}</span> &nbsp;${esc(k.mech)}</div></div></div>
+          <span class="pill ${MODEP[k.mode]}">${k.mode}</span> &nbsp;${esc(k.mech)}</div>
+        ${k.pending ? `<div class="pendnote">مؤشر معلّق — ${esc(K.pendingNote ?? "")}</div>` : ""}</div></div>
         <div class="finputs">`;
       const g = (f) => {
         const v = EV.raw[k.n]?.[f];
@@ -985,7 +987,7 @@ function evCalc() {
     }
   });
   [1, 2, 3, 4].forEach((a) => {
-    const tot = K.kpis.filter((k) => k.ax === a).length;
+    const tot = K.kpis.filter((k) => k.ax === a && !k.pending).length;
     const b = $("#axb" + a);
     if (b) b.textContent = `${axn[a]} من ${tot} مؤشراً · ${axp[a].toFixed(1)} نقطة`;
   });

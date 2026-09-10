@@ -150,6 +150,8 @@ export const META = seed as unknown as {
   denomMap: Record<string, string>;
   centralFields: [string, string][];
   sectors: string[];
+  pendingNote: string;
+  sdgFocus: number[];
   themes: { id: string; name: string; desc: string; sw: string[] }[];
   /** الجهة المُصدِرة والمعتمدون لكل فريق — كما اعتُمدت في أدوات التقارير السابقة */
   issuers: Record<string, {
@@ -271,7 +273,7 @@ export async function seedIfEmpty() {
  * التقييمات السابقة تجريبية بالكامل فتُحذف مرة واحدة. المؤسسات والحسابات
  * والاختيارات وقصص النجاح لا تُمس.
  */
-export const EVAL_SCHEMA = 3;
+export const EVAL_SCHEMA = 4;
 export async function migrateEvalSchema() {
   const cur = (await kv.get<number>(["eval_schema"])).value ?? 1;
   if (cur >= EVAL_SCHEMA) return { migrated: false, deleted: 0 };
